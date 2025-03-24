@@ -1,0 +1,3919 @@
+Microsoft (R) Macro Assembler Version 14.41.34123.0	    12/02/24 14:43:17
+fproj copy 2.asm					     Page 1 - 1
+
+
+
+
+
+				.386
+				.model flat, stdcall
+				.stack 4096
+
+				; Windows API Function Declarations
+				; ExitProcess: Terminates the program with a status code
+				ExitProcess PROTO, dwExitCode:dword
+
+				; PlaySoundA: Windows multimedia function for playing audio
+				; Parameters:
+				; - pszSound: Pointer to sound file name or memory location
+				; - hmod: Handle to module containing audio resource (NULL for file)
+				; - fdwSound: Flags controlling playback behavior
+				PlaySoundA PROTO,
+				    pszSound:PTR BYTE,
+				    hmod:DWORD,
+				    fdwSound:DWORD
+
+				; Sound Playback Configuration Flags
+				; These control how the sound system behaves
+ = 00000001			SND_ASYNC       = 0001h    ; Play asynchronously (don't block program execution)
+ = 00000008			SND_LOOP        = 0008h    ; Loop the sound continuously
+ = 00020000			SND_FILENAME    = 00020000h ; pszSound points to a file name
+
+				; Include necessary library files
+				; Irvine32: Provides basic I/O and utility functions
+				; Macros: Assembly language macro definitions
+				; Winmm: Windows multimedia functions
+				Include Irvine32.inc
+			      C ; Include file for Irvine32.lib             (Irvine32.inc)
+			      C 
+			      C ;OPTION CASEMAP:NONE		; optional: make identifiers case-sensitive
+			      C 
+			      C INCLUDE SmallWin.inc		; MS-Windows prototypes, structures, and constants
+			      C .NOLIST
+			      C .MODEL flat, stdcall
+SmallWin.inc(11) : warning A4011:multiple .MODEL directives found : .MODEL ignored
+			      C .LIST
+			      C 
+			      C INCLUDE VirtualKeys.inc
+			      C ; VirtualKeys.inc
+			      C .NOLIST
+			      C .LIST
+			      C 
+			      C 
+			      C .NOLIST
+			      C .LIST
+			      C 
+				Include Macros.inc
+			      C .NOLIST
+			      C .LIST
+			      C 
+				includelib Winmm.lib
+
+				; Data Segment
+				; Contains all program variables, constants, and data structures
+ 00000000			.data
+				    ; Audio System Variables
+ 00000000 41 6D 69 67 61	    soundFile BYTE "Amiga500.wav", 0      ; Path to background music file
+	   35 30 30 2E 77
+	   61 76 00
+ 0000000D 00			    isMuted BYTE 0                     ; Mute state flag (0=unmuted, 1=muted)
+ 0000000E 50 72 65 73 73	    muteMessage BYTE "Press M to toggle music", 0  ; Mute control instruction
+	   20 4D 20 74 6F
+	   20 74 6F 67 67
+	   6C 65 20 6D 75
+	   73 69 63 00
+ 00000026 4D 75 73 69 63	    mutedStatus BYTE "Music: MUTED", 0            ; Status when music is muted
+	   3A 20 4D 55 54
+	   45 44 00
+ 00000033 4D 75 73 69 63	    unmutedStatus BYTE "Music: PLAYING", 0        ; Status when music is playing
+	   3A 20 50 4C 41
+	   59 49 4E 47 00
+
+				    ; Core Game State Variables
+ 00000042 00			    gameState BYTE 0        ; Current game state (0=Menu, 1=Game, 2=Instructions)
+ 00000043 01			    selectedOption BYTE 1   ; Currently selected menu option
+ 00000044 00			    inputChar BYTE ?        ; Storage for keyboard input
+ 00000045 01			    currentScene BYTE 1     ; Current game scene (1=Left Room, 2=Center Room, 3=Right Room)
+
+				    ; Movement and Screen Boundary Constants
+ = 00000007			    BORDER_LEFT     = 7     ; Leftmost allowed player position
+ = 0000004E			    BORDER_RIGHT    = 78    ; Rightmost allowed player position
+ = 00000009			    BORDER_TOP      = 9     ; Highest allowed player position
+ = 0000000E			    BORDER_BOTTOM   = 14    ; Lowest allowed player position
+
+				    ; Scene Transition and Spawn Point Constants
+ = 0000000C			    TRANSITION_Y_MIN = 12    ; Minimum Y position for room transition
+ = 0000000E			    TRANSITION_Y_MAX = 14    ; Maximum Y position for room transition
+ = 0000000C			    SPAWN_Y = 12            ; Default Y position when entering a room
+ = 00000046			    LEFT_SPAWN_X = 70       ; X position when entering from left
+ = 0000000F			    RIGHT_SPAWN_X = 15      ; X position when entering from right
+
+				    ; Player Position Variables
+ 00000046 28			    playerX BYTE 40         ; Current player X coordinate
+ 00000047 0C			    playerY BYTE 12         ; Current player Y coordinate
+
+				    ; Title Screen ASCII Art
+				    ; Each line of the title graphic is stored separately
+ 00000048 20 20 20 20 5F	    titleArt1 BYTE "    __  ___                        __   __  __                 ", 0
+	   5F 20 20 5F 5F
+	   5F 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   5F 5F 20 20 20
+	   5F 5F 20 20 5F
+	   5F 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 00
+ 00000088 20 20 20 2F 20	    titleArt2 BYTE "   /  |/  /__     ____ _____  ____/ /  / /_/ /_  ___  ____ ___ ", 0
+	   20 7C 2F 20 20
+	   2F 5F 5F 20 20
+	   20 20 20 5F 5F
+	   5F 5F 20 5F 5F
+	   5F 5F 5F 20 20
+	   5F 5F 5F 5F 2F
+	   20 2F 20 20 2F
+	   20 2F 5F 2F 20
+	   2F 5F 20 20 5F
+	   5F 5F 20 20 5F
+	   5F 5F 5F 20 5F
+	   5F 5F 20 00
+ 000000C8 20 20 2F 20 2F	    titleArt3 BYTE "  / /|_/ / _ \   / __ `/ __ \/ __  /  / __/ __ \/ _ \/ __ `__ \", 0
+	   7C 5F 2F 20 2F
+	   20 5F 20 5C 20
+	   20 20 2F 20 5F
+	   5F 20 60 2F 20
+	   5F 5F 20 5C 2F
+	   20 5F 5F 20 20
+	   2F 20 20 2F 20
+	   5F 5F 2F 20 5F
+	   5F 20 5C 2F 20
+	   5F 20 5C 2F 20
+	   5F 5F 20 60 5F
+	   5F 20 5C 00
+ 00000108 20 2F 20 2F 20	    titleArt4 BYTE " / /  / /  __/  / /_/ / / / / /_/ /  / /_/ / / /  __/ / / / / /", 0
+	   20 2F 20 2F 20
+	   20 5F 5F 2F 20
+	   20 2F 20 2F 5F
+	   2F 20 2F 20 2F
+	   20 2F 20 2F 20
+	   2F 5F 2F 20 2F
+	   20 20 2F 20 2F
+	   5F 2F 20 2F 20
+	   2F 20 2F 20 20
+	   5F 5F 2F 20 2F
+	   20 2F 20 2F 20
+	   2F 20 2F 00
+ 00000148 2F 5F 2F 20 20	    titleArt5 BYTE "/_/  /_/\___/   \__,_/_/ /_/\__,_/   \__/_/ /_/\___/_/ /_/ /_/ ", 0
+	   2F 5F 2F 5C 5F
+	   5F 5F 2F 20 20
+	   20 5C 5F 5F 2C
+	   5F 2F 5F 2F 20
+	   2F 5F 2F 5C 5F
+	   5F 2C 5F 2F 20
+	   20 20 5C 5F 5F
+	   2F 5F 2F 20 2F
+	   5F 2F 5C 5F 5F
+	   5F 2F 5F 2F 20
+	   2F 5F 2F 20 2F
+	   5F 2F 20 00
+
+				    ; Main Menu Options
+				    ; Text for each menu choice and prompt
+ 00000188 31 2E 20 53 74	    menuOption1 BYTE "1. Start Game", 0
+	   61 72 74 20 47
+	   61 6D 65 00
+ 00000196 32 2E 20 49 6E	    menuOption2 BYTE "2. Instructions", 0
+	   73 74 72 75 63
+	   74 69 6F 6E 73
+	   00
+ 000001A6 33 2E 20 45 78	    menuOption3 BYTE "3. Exit", 0
+	   69 74 00
+ 000001AE 50 72 65 73 73	    pressKeyPrompt BYTE "Press the corresponding number to select an option", 0
+	   20 74 68 65 20
+	   63 6F 72 72 65
+	   73 70 6F 6E 64
+	   69 6E 67 20 6E
+	   75 6D 62 65 72
+	   20 74 6F 20 73
+	   65 6C 65 63 74
+	   20 61 6E 20 6F
+	   70 74 69 6F 6E
+	   00
+				    
+				    ; Game Control Instructions
+				    ; Display of available controls to player
+ 000001E1 43 6F 6E 74 72	    controlsText BYTE "Controls: WASD - Move, ESC - Pause Menu, M - Toggle Music", 0
+	   6F 6C 73 3A 20
+	   57 41 53 44 20
+	   2D 20 4D 6F 76
+	   65 2C 20 45 53
+	   43 20 2D 20 50
+	   61 75 73 65 20
+	   4D 65 6E 75 2C
+	   20 4D 20 2D 20
+	   54 6F 67 67 6C
+	   65 20 4D 75 73
+	   69 63 00
+ 0000021B 47 61 6D 65 20	    optionsTitle BYTE "Game Controls and Help", 0
+	   43 6F 6E 74 72
+	   6F 6C 73 20 61
+	   6E 64 20 48 65
+	   6C 70 00
+
+				    ; Pause Menu Components
+				    ; Text elements for the pause screen
+ 00000232 20 20 20 20 2D	    pauseTitle BYTE "    - PAUSED -    ", 0
+	   20 50 41 55 53
+	   45 44 20 2D 20
+	   20 20 20 00
+ 00000245 31 2E 20 43 6F	    continueText BYTE "1. Continue Game", 0
+	   6E 74 69 6E 75
+	   65 20 47 61 6D
+	   65 00
+ 00000256 32 2E 20 45 78	    exitText BYTE "2. Exit to Menu", 0
+	   69 74 20 74 6F
+	   20 4D 65 6E 75
+	   00
+ 00000266 50 72 65 73 73	    pausePrompt BYTE "Press the corresponding number", 0
+	   20 74 68 65 20
+	   63 6F 72 72 65
+	   73 70 6F 6E 64
+	   69 6E 67 20 6E
+	   75 6D 62 65 72
+	   00
+				    
+				    ; Border Characters for UI Elements
+				    ; Used to draw boxes and boundaries
+ 00000285 2D 00			    borderHorizontal BYTE "-", 0
+ 00000287 7C 00			    borderVertical BYTE "|", 0
+ 00000289 2B 00			    borderCorner BYTE "+", 0
+
+				    ; Dialog System Elements
+				    ; Prompt for continuing dialogue
+ 0000028B 50 72 65 73 73	    continuePrompt BYTE "Press SPACE to continue", 0
+	   20 53 50 41 43
+	   45 20 74 6F 20
+	   63 6F 6E 74 69
+	   6E 75 65 00
+
+				    ; Scene Layouts
+				    ; ASCII art for each room in the game
+
+				    ; Scene 1: Center Room (Temple) Layout
+				    ; Complete ASCII art representation of the temple room
+ 000002A3 20 20 20 20 20	    sceneTemple1  BYTE "      +------------------------------------------------------------------------+", 0  
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+ 000002F4 20 20 20 20 20	    sceneTemple2  BYTE "      |            +------------+                                              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 2B
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2B 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000345 20 20 20 20 20	    sceneTemple3  BYTE "      |            |   ,-""-.    |                                              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   20 20 20 2C 2D
+	   22 2D 2E 20 20
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000396 20 20 20 20 20	    sceneTemple4  BYTE "      |            |  /      \  |                                              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   20 20 2F 20 20
+	   20 20 20 20 5C
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000003E7 20 20 20 20 20	    sceneTemple5  BYTE "      |            | | ( -- ) | |                                              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   20 7C 20 28 20
+	   2D 2D 20 29 20
+	   7C 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000438 20 20 20 20 20	    sceneTemple6  BYTE "      |            |  \      /  |                                              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   20 20 5C 20 20
+	   20 20 20 20 2F
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000489 20 20 20 20 20	    sceneTemple7  BYTE "      |            |   `-..-'   |                       ________               |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   20 20 20 60 2D
+	   2E 2E 2D 27 20
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 5F 5F 5F 5F
+	   5F 5F 5F 5F 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000004DA 20 20 20 20 20	    sceneTemple8  BYTE "      |            +------------+                      |        |              |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 2B
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2B 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   7C 20 20 20 20
+	   20 20 20 20 7C
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 0000052B 20 20 20 20 20	    sceneTemple9  BYTE "      |------------------------------------------------+--------+--------------|", 0
+	   20 7C 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2B 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 7C
+	   00
+ 0000057C 20 20 20 20 20	    sceneTemple10 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000005CD 20 20 20 20 20	    sceneTemple11 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 0000061E 20 20 20 20 20	    sceneTemple12 BYTE "     _|                                                                        |_", 0
+	   5F 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   5F 00
+ 00000670 20 20 20 20 7C	    sceneTemple13 BYTE "    |                                                                            |", 0
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 7C 00
+ 000006C3 20 20 20 20 20	    sceneTemple14 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000714 20 20 20 20 20	    sceneTemple15 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000765 20 20 20 20 20	    sceneTemple16 BYTE "      +------------------------------------------------------------------------+", 0
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+
+				    ; Scene 2: Right Room (Door) Layout
+				    ; Complete ASCII art representation of the door room
+ 000007B6 20 20 20 20 20	    sceneDoor1  BYTE "      +------------------------------------------------------------------------+", 0  
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+ 00000807 20 20 20 20 20	    sceneDoor2  BYTE "      |   +------------------------------------+                               |", 0
+	   20 7C 20 20 20
+	   2B 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2B 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000858 20 20 20 20 20	    sceneDoor3  BYTE "      |   |   ~~          _/\\_          ~~~   |                               |", 0
+	   20 7C 20 20 20
+	   7C 20 20 20 7E
+	   7E 20 20 20 20
+	   20 20 20 20 20
+	   20 5F 2F 5C 5C
+	   5F 20 20 20 20
+	   20 20 20 20 20
+	   20 7E 7E 7E 20
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000008A9 20 20 20 20 20	    sceneDoor4  BYTE "      |   |       ~      ( -,- )       ~       |                               |", 0
+	   20 7C 20 20 20
+	   7C 20 20 20 20
+	   20 20 20 7E 20
+	   20 20 20 20 20
+	   28 20 2D 2C 2D
+	   20 29 20 20 20
+	   20 20 20 20 7E
+	   20 20 20 20 20
+	   20 20 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000008FA 20 20 20 20 20	    sceneDoor5  BYTE "      |   |     ~~      ==\\__/==       ~~~~~  |     _____________             |", 0
+	   20 7C 20 20 20
+	   7C 20 20 20 20
+	   20 7E 7E 20 20
+	   20 20 20 20 3D
+	   3D 5C 5C 5F 5F
+	   2F 3D 3D 20 20
+	   20 20 20 20 20
+	   7E 7E 7E 7E 7E
+	   20 20 7C 20 20
+	   20 20 20 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 0000094B 20 20 20 20 20	    sceneDoor6  BYTE "      |   |                |||                 |    | |/|\|/|\|/|\|            |", 0
+	   20 7C 20 20 20
+	   7C 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 7C 7C 7C
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 7C 20 20
+	   20 20 7C 20 7C
+	   2F 7C 5C 7C 2F
+	   7C 5C 7C 2F 7C
+	   5C 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 0000099C 20 20 20 20 20	    sceneDoor7  BYTE "      |   | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|    | | | | | | | |            |", 0
+	   20 7C 20 20 20
+	   7C 20 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7E 7E 7E
+	   7E 7E 7C 20 20
+	   20 20 7C 20 7C
+	   20 7C 20 7C 20
+	   7C 20 7C 20 7C
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 000009ED 20 20 20 20 20	    sceneDoor8  BYTE "      |   +------------------------------------+    | | | | | | | |            |", 0
+	   20 7C 20 20 20
+	   2B 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2B 20 20
+	   20 20 7C 20 7C
+	   20 7C 20 7C 20
+	   7C 20 7C 20 7C
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000A3E 20 20 20 20 20	    sceneDoor9  BYTE "      |---------------------------------------------|-|-|-|-|-|-|-|------------|", 0
+	   20 7C 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 7C 2D 7C
+	   2D 7C 2D 7C 2D
+	   7C 2D 7C 2D 7C
+	   2D 7C 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 7C
+	   00
+ 00000A8F 20 20 20 20 20	    sceneDoor10 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000AE0 20 20 20 20 20	    sceneDoor11 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000B31 20 20 20 20 20	    sceneDoor12 BYTE "     _|                                                                        |", 0
+	   5F 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000B82 20 20 20 20 7C	    sceneDoor13 BYTE "    |                                                                          |", 0
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000BD3 20 20 20 20 20	    sceneDoor14 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000C24 20 20 20 20 20	    sceneDoor15 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000C75 20 20 20 20 20	    sceneDoor16 BYTE "      +------------------------------------------------------------------------+", 0
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+
+				    ; Scene 3: Left Room Layout
+				    ; Complete ASCII art representation of the left room
+ 00000CC6 20 20 20 20 20	    sceneLeft1  BYTE "      +------------------------------------------------------------------------+", 0  
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+ 00000D17 20 20 20 20 20	    sceneLeft2  BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000D68 20 20 20 20 20	    sceneLeft3  BYTE "      |                       +------------------------+                       |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   2B 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2B 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000DB9 20 20 20 20 20	    sceneLeft4  BYTE "      |      _______________  |        _/\\_           |  _______________      |", 0
+	   20 7C 20 20 20
+	   20 20 20 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 5F 5F 20 20
+	   7C 20 20 20 20
+	   20 20 20 20 5F
+	   2F 5C 5C 5F 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   7C 20 20 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 5F 5F 5F 5F
+	   5F 5F 5F 20 20
+	   20 20 20 20 7C
+	   00
+ 00000E0A 20 20 20 20 20	    sceneLeft5  BYTE "      |      |||||||||||||||  |       ( U_U )          |  |  ||||||||||||      |", 0
+	   20 7C 20 20 20
+	   20 20 20 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   7C 20 20 20 20
+	   20 20 20 28 20
+	   55 5F 55 20 29
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   7C 20 20 7C 20
+	   20 7C 7C 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   20 20 20 20 7C
+	   00
+ 00000E5B 20 20 20 20 20	    sceneLeft6  BYTE "      |      |||||||||||||||  |       |\\__/=/         |  ||||||||||/||||      |", 0
+	   20 7C 20 20 20
+	   20 20 20 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   7C 20 20 20 20
+	   20 20 20 7C 5C
+	   5C 5F 5F 2F 3D
+	   2F 20 20 20 20
+	   20 20 20 20 20
+	   7C 20 20 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 2F 7C
+	   7C 7C 7C 20 20
+	   20 20 20 20 7C
+	   00
+ 00000EAC 20 20 20 20 20	    sceneLeft7  BYTE "      |      |//////||||||||  |         |||            |  |||  ||||||||||      |", 0
+	   20 7C 20 20 20
+	   20 20 20 7C 2F
+	   2F 2F 2F 2F 2F
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   7C 20 20 20 20
+	   20 20 20 20 20
+	   7C 7C 7C 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   7C 20 20 7C 7C
+	   7C 20 20 7C 7C
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   20 20 20 20 7C
+	   00
+ 00000EFD 20 20 20 20 20	    sceneLeft8  BYTE "      |      ||||||\|//|||||  +------------------------+  |||||| ||||||||      |", 0
+	   20 7C 20 20 20
+	   20 20 20 7C 7C
+	   7C 7C 7C 7C 5C
+	   7C 2F 2F 7C 7C
+	   7C 7C 7C 20 20
+	   2B 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2B 20 20 7C 7C
+	   7C 7C 7C 7C 20
+	   7C 7C 7C 7C 7C
+	   7C 7C 7C 20 20
+	   20 20 20 20 7C
+	   00
+ 00000F4E 20 20 20 20 20	    sceneLeft9  BYTE "      |------|______|______|------------------------------|______|______|------|", 0
+	   20 7C 2D 2D 2D
+	   2D 2D 2D 7C 5F
+	   5F 5F 5F 5F 5F
+	   7C 5F 5F 5F 5F
+	   5F 5F 7C 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 7C 5F
+	   5F 5F 5F 5F 5F
+	   7C 5F 5F 5F 5F
+	   5F 5F 7C 2D 2D
+	   2D 2D 2D 2D 7C
+	   00
+ 00000F9F 20 20 20 20 20	    sceneLeft10 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00000FF0 20 20 20 20 20	    sceneLeft11 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00001041 20 20 20 20 20	    sceneLeft12 BYTE "      |                                                                        |_", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   5F 00
+ 00001093 20 20 20 20 20	    sceneLeft13 BYTE "      |                                                                          |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 7C 00
+ 000010E6 20 20 20 20 20	    sceneLeft14 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00001137 20 20 20 20 20	    sceneLeft15 BYTE "      |                                                                        |", 0
+	   20 7C 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 20
+	   20 20 20 20 7C
+	   00
+ 00001188 20 20 20 20 20	    sceneLeft16 BYTE "      +------------------------------------------------------------------------+", 0
+	   20 2B 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2D
+	   2D 2D 2D 2D 2B
+	   00
+
+				    ; Scene Transition Tracking
+ 000011D9 00			    lastTransition BYTE 0   ; Prevents multiple transitions when crossing room boundaries
+				    
+				    ; Dialogue System State
+ 000011DA 00			    isDialogueActive BYTE 0         ; Flag indicating if dialogue is currently showing
+ 000011DB 00000000		    currentDialogue DWORD 0         ; Pointer to current dialogue text
+ 000011DF 00			    isSpecialDialogue BYTE 0        ; Flag for special dialogue sequences
+				    
+				    ; Game State Flags
+ 000011E0 00			    isGameEnded BYTE 0              ; Indicates if the game has been completed
+
+				    ; Interactive Object Dialogue Text
+				    ; Each piece of dialogue shown when interacting with objects
+ 000011E1 41 6E 20 61 6E	    altarDialogue    BYTE "An ancient altar... There's an eerie glow emanating from its center.", 0
+	   63 69 65 6E 74
+	   20 61 6C 74 61
+	   72 2E 2E 2E 20
+	   54 68 65 72 65
+	   27 73 20 61 6E
+	   20 65 65 72 69
+	   65 20 67 6C 6F
+	   77 20 65 6D 61
+	   6E 61 74 69 6E
+	   67 20 66 72 6F
+	   6D 20 69 74 73
+	   20 63 65 6E 74
+	   65 72 2E 00
+ 00001226 41 20 6D 79 73	    eyeDialogue      BYTE "A mysterious eye symbol. It seems to follow your movement.", 0
+	   74 65 72 69 6F
+	   75 73 20 65 79
+	   65 20 73 79 6D
+	   62 6F 6C 2E 20
+	   49 74 20 73 65
+	   65 6D 73 20 74
+	   6F 20 66 6F 6C
+	   6C 6F 77 20 79
+	   6F 75 72 20 6D
+	   6F 76 65 6D 65
+	   6E 74 2E 00
+ 00001261 41 6E 63 69 65	    spearDialogue    BYTE "Ancient spears... They appear to be ceremonial, yet dangerously sharp.", 0
+	   6E 74 20 73 70
+	   65 61 72 73 2E
+	   2E 2E 20 54 68
+	   65 79 20 61 70
+	   70 65 61 72 20
+	   74 6F 20 62 65
+	   20 63 65 72 65
+	   6D 6F 6E 69 61
+	   6C 2C 20 79 65
+	   74 20 64 61 6E
+	   67 65 72 6F 75
+	   73 6C 79 20 73
+	   68 61 72 70 2E
+	   00
+ 000012A8 41 20 70 61 69	    doorPaintingDialogue BYTE "A painting depicting a ritual. The figures are gathered around a bright light.", 0
+	   6E 74 69 6E 67
+	   20 64 65 70 69
+	   63 74 69 6E 67
+	   20 61 20 72 69
+	   74 75 61 6C 2E
+	   20 54 68 65 20
+	   66 69 67 75 72
+	   65 73 20 61 72
+	   65 20 67 61 74
+	   68 65 72 65 64
+	   20 61 72 6F 75
+	   6E 64 20 61 20
+	   62 72 69 67 68
+	   74 20 6C 69 67
+	   68 74 2E 00
+ 000012F7 42 6F 6F 6B 73	    leftLibraryDialogue BYTE "Books about ancient civilizations and forgotten languages.", 0
+	   20 61 62 6F 75
+	   74 20 61 6E 63
+	   69 65 6E 74 20
+	   63 69 76 69 6C
+	   69 7A 61 74 69
+	   6F 6E 73 20 61
+	   6E 64 20 66 6F
+	   72 67 6F 74 74
+	   65 6E 20 6C 61
+	   6E 67 75 61 67
+	   65 73 2E 00
+ 00001332 53 63 72 6F 6C	    rightLibraryDialogue BYTE "Scrolls containing mysterious symbols and diagrams.", 0
+	   6C 73 20 63 6F
+	   6E 74 61 69 6E
+	   69 6E 67 20 6D
+	   79 73 74 65 72
+	   69 6F 75 73 20
+	   73 79 6D 62 6F
+	   6C 73 20 61 6E
+	   64 20 64 69 61
+	   67 72 61 6D 73
+	   2E 00
+ 00001366 41 20 6D 61 6A	    centerPaintingDialogue BYTE "A majestic painting showing the temple in its glory days.", 0
+	   65 73 74 69 63
+	   20 70 61 69 6E
+	   74 69 6E 67 20
+	   73 68 6F 77 69
+	   6E 67 20 74 68
+	   65 20 74 65 6D
+	   70 6C 65 20 69
+	   6E 20 69 74 73
+	   20 67 6C 6F 72
+	   79 20 64 61 79
+	   73 2E 00
+				    
+				    ; Item Collection Dialogue
+ 000013A0 59 6F 75 20 74	    spearCollectDialogue BYTE "You take one of the ceremonial spears. It feels surprisingly light.", 0
+	   61 6B 65 20 6F
+	   6E 65 20 6F 66
+	   20 74 68 65 20
+	   63 65 72 65 6D
+	   6F 6E 69 61 6C
+	   20 73 70 65 61
+	   72 73 2E 20 49
+	   74 20 66 65 65
+	   6C 73 20 73 75
+	   72 70 72 69 73
+	   69 6E 67 6C 79
+	   20 6C 69 67 68
+	   74 2E 00
+ 000013E4 59 6F 75 20 66	    bookCollectDialogue BYTE "You found an ancient book about agricultural practices.", 0
+	   6F 75 6E 64 20
+	   61 6E 20 61 6E
+	   63 69 65 6E 74
+	   20 62 6F 6F 6B
+	   20 61 62 6F 75
+	   74 20 61 67 72
+	   69 63 75 6C 74
+	   75 72 61 6C 20
+	   70 72 61 63 74
+	   69 63 65 73 2E
+	   00
+				    
+				    ; Already Collected Item Dialogue
+ 0000141C 59 6F 75 27 76	    spearExaminedDialogue BYTE "You've already taken a spear.", 0
+	   65 20 61 6C 72
+	   65 61 64 79 20
+	   74 61 6B 65 6E
+	   20 61 20 73 70
+	   65 61 72 2E 00
+ 0000143A 59 6F 75 27 76	    bookExaminedDialogue BYTE "You've already taken the book.", 0
+	   65 20 61 6C 72
+	   65 61 64 79 20
+	   74 61 6B 65 6E
+	   20 74 68 65 20
+	   62 6F 6F 6B 2E
+	   00
+
+				    ; Victory Dialogue
+ 00001459 41 73 20 79 6F	    specialAltarDialogue1 BYTE "As you approach the altar with both the ancient spear and agricultural text in hand, the air grows thick with anticipation.", 0
+	   75 20 61 70 70
+	   72 6F 61 63 68
+	   20 74 68 65 20
+	   61 6C 74 61 72
+	   20 77 69 74 68
+	   20 62 6F 74 68
+	   20 74 68 65 20
+	   61 6E 63 69 65
+	   6E 74 20 73 70
+	   65 61 72 20 61
+	   6E 64 20 61 67
+	   72 69 63 75 6C
+	   74 75 72 61 6C
+	   20 74 65 78 74
+	   20 69 6E 20 68
+	   61 6E 64 2C 20
+	   74 68 65 20 61
+	   69 72 20 67 72
+	   6F 77 73 20 74
+	   68 69 63 6B 20
+	   77 69 74 68 20
+	   61 6E 74 69 63
+	   69 70 61 74 69
+	   6F 6E 2E 00
+
+				    ; Inventory System
+ 000014D5 00			    hasSpear BYTE 0                 ; Flag indicating spear collection
+ 000014D6 00			    hasBook BYTE 0                  ; Flag indicating book collection
+ 000014D7 00			    spearCollectWaiting BYTE 0      ; Flag for pending spear collection dialogue
+				    
+				    ; Inventory Display Text
+ 000014D8 49 6E 76 65 6E	    inventoryTitle BYTE "Inventory:", 0
+	   74 6F 72 79 3A
+	   00
+ 000014E3 2D 20 53 70 65	    spearItem BYTE "- Spear", 0
+	   61 72 00
+ 000014EB 2D 20 41 67 72	    bookItem BYTE "- Agriculture Book", 0
+	   69 63 75 6C 74
+	   75 72 65 20 42
+	   6F 6F 6B 00
+ 000014FE 59 6F 75 20 63	    itemCollectedMsg BYTE "You collected: ", 0
+	   6F 6C 6C 65 63
+	   74 65 64 3A 20
+	   00
+
+				    ; Inventory UI Elements
+ 0000150E 7C 00			    inventoryBorderVertical BYTE "|", 0
+ = 00000019			    inventoryWidth = 25             ; Width of inventory display box
+ = 00000005			    inventoryHeight = 5             ; Height of inventory display box
+
+				    ; Interaction Trigger Points
+				    ; Y-coordinates for various interaction zones
+ = 00000008			    ALTAR_INTERACT_TOP = 8
+ = 00000008			    EYE_INTERACT_TOP = 8
+ = 00000008			    SPEAR_INTERACT_Y = 8
+ = 00000008			    DOOR_PAINTING_Y = 8
+ = 00000008			    LIBRARY_INTERACT_Y = 8
+ = 00000008			    CENTER_PAINTING_Y = 8
+
+				    ; X-coordinate ranges for interactions
+ = 00000023			    DOOR_PAINTING_LEFT_X = 35
+ = 0000002D			    DOOR_PAINTING_RIGHT_X = 45
+ = 0000000D			    LEFT_LIBRARY_LEFT_X = 13
+ = 0000001C			    LEFT_LIBRARY_RIGHT_X = 28
+ = 0000003A			    RIGHT_LIBRARY_LEFT_X = 58
+ = 00000049			    RIGHT_LIBRARY_RIGHT_X = 73
+ = 0000001E			    CENTER_PAINTING_LEFT_X = 30
+ = 00000038			    CENTER_PAINTING_RIGHT_X = 56
+
+				    ; Altar Interaction Boundaries
+ = 00000037			    ALTAR_LEFT   = 55              ; Left boundary of altar
+ = 00000041			    ALTAR_RIGHT  = 65              ; Right boundary of altar
+ = 00000008			    ALTAR_TOP    = 8               ; Top boundary of altar
+ = 00000009			    ALTAR_BOTTOM = 9               ; Bottom boundary of altar
+ = 00000001			    ALTAR_INTERACT_DIST = 1        ; Distance required for altar interaction
+
+				    ; Eye Symbol Interaction Zone
+ = 00000013			    EYE_LEFT = 19                  ; Left boundary of eye symbol
+ = 00000021			    EYE_RIGHT = 33                 ; Right boundary of eye symbol
+ = 00000008			    EYE_Y = 8                      ; Y-coordinate of eye symbol
+
+				    ; Door Scene Interaction Zones
+ = 0000000B			    DOOR_PAINTING_LEFT = 11        ; Left edge of door painting
+ = 00000030			    DOOR_PAINTING_RIGHT = 48       ; Right edge of door painting
+ = 00000008			    DOOR_PAINTING_Y = 8            ; Y-coordinate for painting interaction
+
+				    ; Spear Rack Location
+ = 00000034			    SPEAR_LEFT = 52                ; Left edge of spear rack
+ = 00000043			    SPEAR_RIGHT = 67               ; Right edge of spear rack
+ = 00000008			    SPEAR_Y = 8                    ; Y-coordinate for spear interaction
+				    
+				    ; Door Position
+ = 00000017			    DOOR_X = 23                    ; X-coordinate of the door
+ = 0000000B			    DOOR_Y = 11                    ; Y-coordinate of the door
+
+				; Begin Code Segment
+ 00000000			.code
+ 00000000			main PROC
+				    ; Initialize game environment
+ 00000000  E8 00000000 E	    call ClrScr                    ; Clear the screen before starting
+				    ; Start background music with configured flags
+				    INVOKE PlaySoundA, OFFSET soundFile, NULL, SND_ASYNC OR SND_LOOP OR SND_FILENAME
+ 00000005  68 00020009	   *	    push   +000020009h
+ 0000000A  6A 00	   *	    push   +000000000h
+ 0000000C  68 00000000 R   *	    push   dword  ptr OFFSET FLAT: soundFile
+ 00000011  E8 00000000 E   *	    call   PlaySoundA
+				    
+ 00000016			GameLoop:
+				    ; Display music controls
+ 00000016  B2 02		    mov dl, 2                      ; Set cursor X position
+ 00000018  B6 02		    mov dh, 2                      ; Set cursor Y position
+ 0000001A  E8 00000000 E	    call Gotoxy
+ 0000001F  BA 0000000E R	    mov edx, OFFSET muteMessage    ; Load mute toggle instruction
+ 00000024  E8 00000000 E	    call WriteString
+				    
+				    ; Update and display mute status
+ 00000029  B2 1E		    mov dl, 30                     ; Position for status display
+ 0000002B  B6 02		    mov dh, 2
+ 0000002D  E8 00000000 E	    call Gotoxy
+				    ; Clear previous status
+ 00000032  B9 00000014		    mov ecx, 20                    ; Length of status area to clear
+ 00000037  B0 20		    mov al, ' '                    ; Space character for clearing
+ 00000039			ClearStatus:
+ 00000039  E8 00000000 E	    call WriteChar
+ 0000003E  E2 F9		    loop ClearStatus
+				    
+				    ; Reposition cursor for new status
+ 00000040  B2 1E		    mov dl, 30
+ 00000042  B6 02		    mov dh, 2
+ 00000044  E8 00000000 E	    call Gotoxy
+				    
+				    ; Display appropriate mute status
+ 00000049  80 3D 0000000D R	    cmp isMuted, 1
+	   01
+ 00000050  74 07		    je showMuted
+ 00000052  BA 00000033 R	    mov edx, OFFSET unmutedStatus
+ 00000057  EB 05		    jmp displayMuteStatus
+ 00000059			showMuted:
+ 00000059  BA 00000026 R	    mov edx, OFFSET mutedStatus
+ 0000005E			displayMuteStatus:
+ 0000005E  E8 00000000 E	    call WriteString
+
+				    ; Process game states
+ 00000063  A0 00000042 R	    mov al, gameState
+ 00000068  3C 00		    cmp al, 0                      ; Check if in menu state
+ 0000006A  74 0E		    je DoProcessMenu
+ 0000006C  3C 01		    cmp al, 1                      ; Check if in game state
+ 0000006E  0F 84 00000155	    je ProcessGameState
+ 00000074  3C 02		    cmp al, 2                      ; Check if in instructions state
+ 00000076  74 09		    je DoProcessInstructions
+ 00000078  EB 53		    jmp ExitGameProcedure
+
+ 0000007A			    DoProcessMenu:
+ 0000007A  E8 00000028		        call ProcessMenuState
+ 0000007F  EB 95		        jmp GameLoop
+				        
+ 00000081			    DoProcessInstructions:
+ 00000081  E8 0000006D		        call ProcessInstructionsState
+ 00000086  EB 8E		        jmp GameLoop
+ 00000088			main ENDP
+
+ 00000088			InitializeGameState PROC
+				    ; Save all registers
+ 00000088  60			    pushad
+				    
+				    ; Set initial game state values
+ 00000089  C6 05 00000045 R	    mov currentScene, 1            ; Start in Temple room
+	   01
+ 00000090  C6 05 000011DA R	    mov isDialogueActive, 0        ; No active dialogue
+	   00
+ 00000097  C6 05 00000046 R	    mov playerX, 43               ; Initial player X position
+	   2B
+ 0000009E  C6 05 00000047 R	    mov playerY, 14               ; Initial player Y position
+	   0E
+				    
+				    ; Restore registers and return
+ 000000A5  61			    popad
+ 000000A6  C3			    ret
+ 000000A7			InitializeGameState ENDP
+
+ 000000A7			ProcessMenuState PROC
+				    ; Draw the menu and process input
+ 000000A7  E8 00000071		    call DrawMenu                  ; Display menu options
+ 000000AC  E8 00000000 E	    call ReadChar                  ; Wait for key press
+				    
+				    ; Check menu selection
+ 000000B1  3C 31		    cmp al, '1'                   ; Start Game
+ 000000B3  74 44		    je InitializeNewGame
+ 000000B5  3C 32		    cmp al, '2'                   ; Instructions
+ 000000B7  74 57		    je EnterInstructionsState
+ 000000B9  3C 33		    cmp al, '3'                   ; Exit
+ 000000BB  74 10		    je ExitGameProcedure
+ 000000BD  3C 6D		    cmp al, 'm'                   ; Toggle Music
+ 000000BF  74 01		    je ToggleMusicInMenu
+ 000000C1  C3			    ret
+
+ 000000C2			ToggleMusicInMenu:
+ 000000C2  E8 0000043B		    call ToggleMusic              ; Toggle music state
+ 000000C7  E8 00000051		    call DrawMenu                 ; Redraw menu
+ 000000CC  C3			    ret
+ 000000CD			ProcessMenuState ENDP
+
+ 000000CD			ExitGameProcedure PROC
+ 000000CD  E8 00000000 E	    call ClrScr                   ; Clear screen before exit
+				    ; Display exit message
+ 000000D2  B2 19		    mov dl, 25
+ 000000D4  B6 0C		    mov dh, 12
+ 000000D6  E8 00000000 E	    call Gotoxy
+				    mWrite "Thanks for playing! Press any key to exit."
+ 00001510		     1		.data		
+ 00001510 54 68 61 6E 6B     1		??0000 BYTE "Thanks for playing! Press any key to exit.",0	
+	   73 20 66 6F 72
+	   20 70 6C 61 79
+	   69 6E 67 21 20
+	   50 72 65 73 73
+	   20 61 6E 79 20
+	   6B 65 79 20 74
+	   6F 20 65 78 69
+	   74 2E 00
+ 000000DB		     1		.code
+ 000000DB  52		     1		push	edx
+ 000000DC  BA 00001510 R     1		mov	edx,OFFSET ??0000
+ 000000E1  E8 00000000 E     1		call	WriteString
+ 000000E6  5A		     1		pop	edx
+ 000000E7  E8 00000000 E	    call ReadChar                 ; Wait for final key press
+				    invoke ExitProcess, 0         ; Exit program
+ 000000EC  6A 00	   *	    push   +000000000h
+ 000000EE  E8 00000000 E   *	    call   ExitProcess
+ 000000F3			ExitGameProcedure ENDP
+
+ 000000F3			ProcessInstructionsState PROC
+ 000000F3  E8 00000176		    call ShowInstructions         ; Display game instructions
+ 000000F8  C3			    ret
+ 000000F9			ProcessInstructionsState ENDP
+
+ 000000F9			InitializeNewGame PROC
+ 000000F9  E8 FFFFFF8A		    call InitializeGameState      ; Set up initial game state
+ 000000FE  C6 05 00000042 R	    mov gameState, 1              ; Set state to active game
+	   01
+ 00000105  E8 00000000 E	    call ClrScr                   ; Clear screen
+ 0000010A  E8 000000BA		    call ProcessGameState         ; Start game processing
+ 0000010F  C3			    ret
+ 00000110			InitializeNewGame ENDP
+
+ 00000110			EnterInstructionsState PROC
+ 00000110  C6 05 00000042 R	    mov gameState, 2              ; Set state to instructions
+	   02
+ 00000117  E8 00000000 E	    call ClrScr                   ; Clear screen
+ 0000011C  C3			    ret
+ 0000011D			EnterInstructionsState ENDP
+
+ 0000011D			DrawMenu PROC
+				    ; Draw main title art
+ 0000011D  B2 0F		    mov dl, 15                    ; X position for title
+ 0000011F  B6 05		    mov dh, 5                     ; Y position for first line
+ 00000121  E8 00000000 E	    call Gotoxy
+ 00000126  BA 00000048 R	    mov edx, OFFSET titleArt1     ; Load first line of title
+ 0000012B  E8 00000000 E	    call WriteString
+				    
+				    ; Draw remaining title lines
+ 00000130  B2 0F		    mov dl, 15
+ 00000132  B6 06		    mov dh, 6
+ 00000134  E8 00000000 E	    call Gotoxy
+ 00000139  BA 00000088 R	    mov edx, OFFSET titleArt2
+ 0000013E  E8 00000000 E	    call WriteString
+				    
+ 00000143  B2 0F		    mov dl, 15
+ 00000145  B6 07		    mov dh, 7
+ 00000147  E8 00000000 E	    call Gotoxy
+ 0000014C  BA 000000C8 R	    mov edx, OFFSET titleArt3
+ 00000151  E8 00000000 E	    call WriteString
+				    
+ 00000156  B2 0F		    mov dl, 15
+ 00000158  B6 08		    mov dh, 8
+ 0000015A  E8 00000000 E	    call Gotoxy
+ 0000015F  BA 00000108 R	    mov edx, OFFSET titleArt4
+ 00000164  E8 00000000 E	    call WriteString
+
+ 00000169  B2 0F		    mov dl, 15
+ 0000016B  B6 09		    mov dh, 9
+ 0000016D  E8 00000000 E	    call Gotoxy
+ 00000172  BA 00000148 R	    mov edx, OFFSET titleArt5
+ 00000177  E8 00000000 E	    call WriteString
+
+				    ; Draw menu options
+ 0000017C  B2 19		    mov dl, 25                    ; X position for menu options
+ 0000017E  B6 0F		    mov dh, 15                    ; Y position for first option
+ 00000180  E8 00000000 E	    call Gotoxy
+ 00000185  BA 00000188 R	    mov edx, OFFSET menuOption1
+ 0000018A  E8 00000000 E	    call WriteString
+
+ 0000018F  B2 19		    mov dl, 25
+ 00000191  B6 10		    mov dh, 16
+ 00000193  E8 00000000 E	    call Gotoxy
+ 00000198  BA 00000196 R	    mov edx, OFFSET menuOption2
+ 0000019D  E8 00000000 E	    call WriteString
+
+ 000001A2  B2 19		    mov dl, 25
+ 000001A4  B6 11		    mov dh, 17
+ 000001A6  E8 00000000 E	    call Gotoxy
+ 000001AB  BA 000001A6 R	    mov edx, OFFSET menuOption3
+ 000001B0  E8 00000000 E	    call WriteString
+
+				    ; Draw selection prompt
+ 000001B5  B2 0F		    mov dl, 15
+ 000001B7  B6 16		    mov dh, 22
+ 000001B9  E8 00000000 E	    call Gotoxy
+ 000001BE  BA 000001AE R	    mov edx, OFFSET pressKeyPrompt
+ 000001C3  E8 00000000 E	    call WriteString
+
+ 000001C8  C3			    ret
+ 000001C9			DrawMenu ENDP
+
+ 000001C9			ProcessGameState PROC
+ 000001C9  E8 00000000 E	    call ClrScr                   ; Clear screen for new game state
+				    
+				    ; Determine which scene to draw
+ 000001CE  80 3D 00000045 R	    cmp currentScene, 1
+	   01
+ 000001D5  74 14		    je DrawTempleRoom
+ 000001D7  80 3D 00000045 R	    cmp currentScene, 2
+	   02
+ 000001DE  74 12		    je DrawLeftRoom
+ 000001E0  80 3D 00000045 R	    cmp currentScene, 3
+	   03
+ 000001E7  74 10		    je DrawDoorRoom
+ 000001E9  EB 15		    jmp ContinueGameState
+				    
+ 000001EB			DrawTempleRoom:
+ 000001EB  E8 00000B02		    call DrawTempleScene
+ 000001F0  EB 0E		    jmp ContinueGameState
+				    
+ 000001F2			DrawLeftRoom:
+ 000001F2  E8 00000110		    call DrawLeftScene
+ 000001F7  EB 07		    jmp ContinueGameState
+				    
+ 000001F9			DrawDoorRoom:
+ 000001F9  E8 00000C2A		    call DrawDoorScene
+ 000001FE  EB 00		    jmp ContinueGameState
+
+ 00000200			ContinueGameState:
+ 00000200  E8 00000033		    call DrawPlayer              ; Draw player in current position
+ 00000205  E8 000007F7		    call DrawInventory          ; Display inventory
+
+ 0000020A			GameStateLoop:
+ 0000020A  E8 00000000 E	    call ReadKey                ; Wait for keyboard input
+ 0000020F  74 F9		    jz GameStateLoop           ; If no key pressed, keep waiting
+				    
+ 00000211  3C 1B		    cmp al, 1Bh                ; Check for ESC key
+ 00000213  74 07		    je HandlePause
+				    
+ 00000215  E8 00000D44		    call HandleKeyInput        ; Process other key inputs
+ 0000021A  EB EE		    jmp GameStateLoop
+
+ 0000021C			HandlePause:
+ 0000021C  E8 00000246		    call HandlePauseMenu       ; Display and handle pause menu
+ 00000221  83 F8 01		    cmp eax, 1                 ; Check if returning to main menu
+ 00000224  75 E4		    jne GameStateLoop
+				    
+ 00000226  C6 05 00000042 R	    mov gameState, 0           ; Set state back to menu
+	   00
+ 0000022D  E8 00000000 E	    call ClrScr
+ 00000232  E8 FFFFFEE6		    call DrawMenu
+ 00000237  C3			    ret
+ 00000238			ProcessGameState ENDP
+
+ 00000238			DrawPlayer PROC
+ 00000238  60			    pushad                     ; Save all registers
+				    
+ 00000239  8A 15 00000046 R	    mov dl, PlayerX           ; Set X position
+ 0000023F  8A 35 00000047 R	    mov dh, PlayerY           ; Set Y position
+ 00000245  E8 00000000 E	    call Gotoxy
+ 0000024A  B0 58		    mov al, "X"               ; Player character
+ 0000024C  E8 00000000 E	    call WriteChar
+				    
+ 00000251  61			    popad                     ; Restore all registers
+ 00000252  C3			    ret
+ 00000253			DrawPlayer ENDP
+
+ 00000253			UpdatePlayer PROC
+ 00000253  60			    pushad                    ; Save all registers
+				    
+ 00000254  8A 15 00000046 R	    mov dl, PlayerX          ; Set X position
+ 0000025A  8A 35 00000047 R	    mov dh, PlayerY          ; Set Y position
+ 00000260  E8 00000000 E	    call Gotoxy
+ 00000265  B0 20		    mov al, " "              ; Clear old position with space
+ 00000267  E8 00000000 E	    call WriteChar
+				    
+ 0000026C  61			    popad                    ; Restore all registers
+ 0000026D  C3			    ret
+ 0000026E			UpdatePlayer ENDP
+
+ 0000026E			ShowInstructions PROC
+ 0000026E  E8 00000000 E	    call ClrScr              ; Clear screen for instructions
+				    
+				    ; Draw instructions title
+ 00000273  B2 14		    mov dl, 20
+ 00000275  B6 05		    mov dh, 5
+ 00000277  E8 00000000 E	    call Gotoxy
+				    mWrite "How to Play"
+ 0000153B		     1		.data		
+ 0000153B 48 6F 77 20 74     1		??0001 BYTE "How to Play",0	
+	   6F 20 50 6C 61
+	   79 00
+ 0000027C		     1		.code
+ 0000027C  52		     1		push	edx
+ 0000027D  BA 0000153B R     1		mov	edx,OFFSET ??0001
+ 00000282  E8 00000000 E     1		call	WriteString
+ 00000287  5A		     1		pop	edx
+				    
+				    ; Draw control instructions
+ 00000288  B2 0F		    mov dl, 15
+ 0000028A  B6 07		    mov dh, 7
+ 0000028C  E8 00000000 E	    call Gotoxy
+				    mWrite "- Use WASD keys to move your character"
+ 00001547		     1		.data		
+ 00001547 2D 20 55 73 65     1		??0002 BYTE "- Use WASD keys to move your character",0	
+	   20 57 41 53 44
+	   20 6B 65 79 73
+	   20 74 6F 20 6D
+	   6F 76 65 20 79
+	   6F 75 72 20 63
+	   68 61 72 61 63
+	   74 65 72 00
+ 00000291		     1		.code
+ 00000291  52		     1		push	edx
+ 00000292  BA 00001547 R     1		mov	edx,OFFSET ??0002
+ 00000297  E8 00000000 E     1		call	WriteString
+ 0000029C  5A		     1		pop	edx
+				    
+ 0000029D  B2 0F		    mov dl, 15
+ 0000029F  B6 08		    mov dh, 8
+ 000002A1  E8 00000000 E	    call Gotoxy
+				    mWrite "- ESC to access the pause menu"
+ 0000156E		     1		.data		
+ 0000156E 2D 20 45 53 43     1		??0003 BYTE "- ESC to access the pause menu",0	
+	   20 74 6F 20 61
+	   63 63 65 73 73
+	   20 74 68 65 20
+	   70 61 75 73 65
+	   20 6D 65 6E 75
+	   00
+ 000002A6		     1		.code
+ 000002A6  52		     1		push	edx
+ 000002A7  BA 0000156E R     1		mov	edx,OFFSET ??0003
+ 000002AC  E8 00000000 E     1		call	WriteString
+ 000002B1  5A		     1		pop	edx
+				    
+ 000002B2  B2 0F		    mov dl, 15
+ 000002B4  B6 09		    mov dh, 9
+ 000002B6  E8 00000000 E	    call Gotoxy
+				    mWrite "- Press M to toggle music"
+ 0000158D		     1		.data		
+ 0000158D 2D 20 50 72 65     1		??0004 BYTE "- Press M to toggle music",0	
+	   73 73 20 4D 20
+	   74 6F 20 74 6F
+	   67 67 6C 65 20
+	   6D 75 73 69 63
+	   00
+ 000002BB		     1		.code
+ 000002BB  52		     1		push	edx
+ 000002BC  BA 0000158D R     1		mov	edx,OFFSET ??0004
+ 000002C1  E8 00000000 E     1		call	WriteString
+ 000002C6  5A		     1		pop	edx
+				    
+ 000002C7  B2 0F		    mov dl, 15
+ 000002C9  B6 0A		    mov dh, 10
+ 000002CB  E8 00000000 E	    call Gotoxy
+				    mWrite "- Explore the temple and discover its secrets"
+ 000015A7		     1		.data		
+ 000015A7 2D 20 45 78 70     1		??0005 BYTE "- Explore the temple and discover its secrets",0	
+	   6C 6F 72 65 20
+	   74 68 65 20 74
+	   65 6D 70 6C 65
+	   20 61 6E 64 20
+	   64 69 73 63 6F
+	   76 65 72 20 69
+	   74 73 20 73 65
+	   63 72 65 74 73
+	   00
+ 000002D0		     1		.code
+ 000002D0  52		     1		push	edx
+ 000002D1  BA 000015A7 R     1		mov	edx,OFFSET ??0005
+ 000002D6  E8 00000000 E     1		call	WriteString
+ 000002DB  5A		     1		pop	edx
+				    
+				    ; Draw return prompt
+ 000002DC  B2 0F		    mov dl, 15
+ 000002DE  B6 14		    mov dh, 20
+ 000002E0  E8 00000000 E	    call Gotoxy
+				    mWrite "Press SPACE to return to menu"
+ 000015D5		     1		.data		
+ 000015D5 50 72 65 73 73     1		??0006 BYTE "Press SPACE to return to menu",0	
+	   20 53 50 41 43
+	   45 20 74 6F 20
+	   72 65 74 75 72
+	   6E 20 74 6F 20
+	   6D 65 6E 75 00
+ 000002E5		     1		.code
+ 000002E5  52		     1		push	edx
+ 000002E6  BA 000015D5 R     1		mov	edx,OFFSET ??0006
+ 000002EB  E8 00000000 E     1		call	WriteString
+ 000002F0  5A		     1		pop	edx
+				    
+ 000002F1			WaitForInstructionInput:
+ 000002F1  E8 00000000 E	    call ReadChar
+ 000002F6  3C 20		    cmp al, 20h              ; Check for space key
+ 000002F8  75 F7		    jne WaitForInstructionInput
+				    
+ 000002FA  C6 05 00000042 R	    mov gameState, 0         ; Return to menu state
+	   00
+ 00000301  E8 00000000 E	    call ClrScr
+ 00000306  C3			    ret
+ 00000307			ShowInstructions ENDP
+
+ 00000307			DrawLeftScene PROC
+				    ; Draw the complete left room layout line by line
+				    ; First line
+ 00000307  B2 00		    mov dl, 0
+ 00000309  B6 00		    mov dh, 0
+ 0000030B  E8 00000000 E	    call Gotoxy
+ 00000310  BA 00000CC6 R	    mov edx, OFFSET sceneLeft1
+ 00000315  E8 00000000 E	    call WriteString
+				    
+				    ; Second line
+ 0000031A  B2 00		    mov dl, 0
+ 0000031C  B6 01		    mov dh, 1
+ 0000031E  E8 00000000 E	    call Gotoxy
+ 00000323  BA 00000D17 R	    mov edx, OFFSET sceneLeft2
+ 00000328  E8 00000000 E	    call WriteString
+				    
+				    ; Third line
+ 0000032D  B2 00		    mov dl, 0
+ 0000032F  B6 02		    mov dh, 2
+ 00000331  E8 00000000 E	    call Gotoxy
+ 00000336  BA 00000D68 R	    mov edx, OFFSET sceneLeft3
+ 0000033B  E8 00000000 E	    call WriteString
+
+				    ; Continue with remaining lines
+ 00000340  B2 00		    mov dl, 0
+ 00000342  B6 03		    mov dh, 3
+ 00000344  E8 00000000 E	    call Gotoxy
+ 00000349  BA 00000DB9 R	    mov edx, OFFSET sceneLeft4
+ 0000034E  E8 00000000 E	    call WriteString
+				    
+ 00000353  B2 00		    mov dl, 0
+ 00000355  B6 04		    mov dh, 4
+ 00000357  E8 00000000 E	    call Gotoxy
+ 0000035C  BA 00000E0A R	    mov edx, OFFSET sceneLeft5
+ 00000361  E8 00000000 E	    call WriteString
+				    
+ 00000366  B2 00		    mov dl, 0
+ 00000368  B6 05		    mov dh, 5
+ 0000036A  E8 00000000 E	    call Gotoxy
+ 0000036F  BA 00000E5B R	    mov edx, OFFSET sceneLeft6
+ 00000374  E8 00000000 E	    call WriteString
+				    
+ 00000379  B2 00		    mov dl, 0
+ 0000037B  B6 06		    mov dh, 6
+ 0000037D  E8 00000000 E	    call Gotoxy
+ 00000382  BA 00000EAC R	    mov edx, OFFSET sceneLeft7
+ 00000387  E8 00000000 E	    call WriteString
+				    
+ 0000038C  B2 00		    mov dl, 0
+ 0000038E  B6 07		    mov dh, 7
+ 00000390  E8 00000000 E	    call Gotoxy
+ 00000395  BA 00000EFD R	    mov edx, OFFSET sceneLeft8
+ 0000039A  E8 00000000 E	    call WriteString
+				    
+ 0000039F  B2 00		    mov dl, 0
+ 000003A1  B6 08		    mov dh, 8
+ 000003A3  E8 00000000 E	    call Gotoxy
+ 000003A8  BA 00000F4E R	    mov edx, OFFSET sceneLeft9
+ 000003AD  E8 00000000 E	    call WriteString
+				    
+ 000003B2  B2 00		    mov dl, 0
+ 000003B4  B6 09		    mov dh, 9
+ 000003B6  E8 00000000 E	    call Gotoxy
+ 000003BB  BA 00000F9F R	    mov edx, OFFSET sceneLeft10
+ 000003C0  E8 00000000 E	    call WriteString
+				    
+ 000003C5  B2 00		    mov dl, 0
+ 000003C7  B6 0A		    mov dh, 10
+ 000003C9  E8 00000000 E	    call Gotoxy
+ 000003CE  BA 00000FF0 R	    mov edx, OFFSET sceneLeft11
+ 000003D3  E8 00000000 E	    call WriteString
+				    
+ 000003D8  B2 00		    mov dl, 0
+ 000003DA  B6 0B		    mov dh, 11
+ 000003DC  E8 00000000 E	    call Gotoxy
+ 000003E1  BA 00001041 R	    mov edx, OFFSET sceneLeft12
+ 000003E6  E8 00000000 E	    call WriteString
+				    
+ 000003EB  B2 00		    mov dl, 0
+ 000003ED  B6 0C		    mov dh, 12
+ 000003EF  E8 00000000 E	    call Gotoxy
+ 000003F4  BA 00001093 R	    mov edx, OFFSET sceneLeft13
+ 000003F9  E8 00000000 E	    call WriteString
+				    
+ 000003FE  B2 00		    mov dl, 0
+ 00000400  B6 0D		    mov dh, 13
+ 00000402  E8 00000000 E	    call Gotoxy
+ 00000407  BA 000010E6 R	    mov edx, OFFSET sceneLeft14
+ 0000040C  E8 00000000 E	    call WriteString
+				    
+ 00000411  B2 00		    mov dl, 0
+ 00000413  B6 0E		    mov dh, 14
+ 00000415  E8 00000000 E	    call Gotoxy
+ 0000041A  BA 00001137 R	    mov edx, OFFSET sceneLeft15
+ 0000041F  E8 00000000 E	    call WriteString
+				    
+ 00000424  B2 00		    mov dl, 0
+ 00000426  B6 0F		    mov dh, 15
+ 00000428  E8 00000000 E	    call Gotoxy
+ 0000042D  BA 00001188 R	    mov edx, OFFSET sceneLeft16
+ 00000432  E8 00000000 E	    call WriteString
+
+				    ; Update inventory display
+ 00000437  E8 000005C5		    call DrawInventory
+ 0000043C  C3			    ret
+ 0000043D			DrawLeftScene ENDP
+
+ 0000043D			ClearDialogueArea PROC
+ 0000043D  60			    pushad
+				    
+				    ; Clear 4 lines starting from line 20
+ 0000043E  B9 00000004		    mov ecx, 4                ; Number of lines to clear
+ 00000443  B6 14		    mov dh, 20               ; Start at line 20
+				    
+ 00000445			ClearLoop:
+ 00000445  B2 00		    mov dl, 0                ; Start from left edge
+ 00000447  E8 00000000 E	    call Gotoxy
+				    
+ 0000044C  51			    push ecx                ; Save line counter
+ 0000044D  B9 00000064		    mov ecx, 100            ; Clear full width of screen
+ 00000452  B0 20		    mov al, ' '             ; Space character
+				    
+ 00000454			ClearLine:
+ 00000454  E8 00000000 E	    call WriteChar
+ 00000459  E2 F9		    loop ClearLine
+				    
+ 0000045B  FE C6		    inc dh                  ; Move to next line
+ 0000045D  59			    pop ecx                ; Restore line counter
+ 0000045E  E2 E5		    loop ClearLoop
+				    
+				    ; Redraw player after clearing
+ 00000460  E8 FFFFFDD3		    call DrawPlayer
+				    
+ 00000465  61			    popad
+ 00000466  C3			    ret
+ 00000467			ClearDialogueArea ENDP
+
+ 00000467			HandlePauseMenu PROC
+ 00000467  E8 00000000 E	    call ClrScr
+				    
+				    ; Draw pause menu title
+ 0000046C  B2 19		    mov dl, 25
+ 0000046E  B6 0A		    mov dh, 10
+ 00000470  E8 00000000 E	    call Gotoxy
+ 00000475  BA 00000232 R	    mov edx, OFFSET pauseTitle
+ 0000047A  E8 00000000 E	    call WriteString
+				    
+				    ; Draw menu options
+ 0000047F  B2 19		    mov dl, 25
+ 00000481  B6 0C		    mov dh, 12
+ 00000483  E8 00000000 E	    call Gotoxy
+ 00000488  BA 00000245 R	    mov edx, OFFSET continueText
+ 0000048D  E8 00000000 E	    call WriteString
+				    
+ 00000492  B2 19		    mov dl, 25
+ 00000494  B6 0D		    mov dh, 13
+ 00000496  E8 00000000 E	    call Gotoxy
+ 0000049B  BA 00000256 R	    mov edx, OFFSET exitText
+ 000004A0  E8 00000000 E	    call WriteString
+				    
+				    ; Draw selection prompt
+ 000004A5  B2 19		    mov dl, 25
+ 000004A7  B6 0F		    mov dh, 15
+ 000004A9  E8 00000000 E	    call Gotoxy
+ 000004AE  BA 00000266 R	    mov edx, OFFSET pausePrompt
+ 000004B3  E8 00000000 E	    call WriteString
+
+ 000004B8			WaitForPauseInput:
+ 000004B8  E8 00000000 E	    call ReadChar
+				    
+ 000004BD  3C 31		    cmp al, '1'             ; Check for continue option
+ 000004BF  74 06		    je ContinueGame
+ 000004C1  3C 32		    cmp al, '2'             ; Check for exit option
+ 000004C3  74 37		    je ExitToMenu
+ 000004C5  EB F1		    jmp WaitForPauseInput
+
+ 000004C7			ContinueGame:
+ 000004C7  E8 00000000 E	    call ClrScr
+				    
+				    ; Redraw current scene based on currentScene value
+ 000004CC  80 3D 00000045 R	    cmp currentScene, 1
+	   01
+ 000004D3  74 10		    je DrawScene1
+ 000004D5  80 3D 00000045 R	    cmp currentScene, 2
+	   02
+ 000004DC  74 0E		    je DrawScene2
+ 000004DE  E8 00000945		    call DrawDoorScene
+ 000004E3  EB 0C		    jmp ContinueDone
+				    
+ 000004E5			DrawScene1:
+ 000004E5  E8 00000808		    call DrawTempleScene
+ 000004EA  EB 05		    jmp ContinueDone
+				    
+ 000004EC			DrawScene2:
+ 000004EC  E8 FFFFFE16		    call DrawLeftScene
+				    
+ 000004F1			ContinueDone:
+ 000004F1  E8 FFFFFD42		    call DrawPlayer
+ 000004F6  B8 00000000		    mov eax, 0              ; Signal to continue game
+ 000004FB  C3			    ret
+
+ 000004FC			ExitToMenu:
+ 000004FC  B8 00000001		    mov eax, 1              ; Signal to return to menu
+ 00000501  C3			    ret
+ 00000502			HandlePauseMenu ENDP
+
+ 00000502			ToggleMusic PROC
+ 00000502  60			    pushad
+				    
+				    ; Toggle mute state
+ 00000503  80 35 0000000D R	    xor isMuted, 1          ; Switch between 0 and 1
+	   01
+				    
+				    ; Apply new mute state
+ 0000050A  80 3D 0000000D R	    cmp isMuted, 1
+	   01
+ 00000511  74 13		    je MuteBackgroundMusic
+				    
+				    ; Unmute - restart music
+				    INVOKE PlaySoundA, OFFSET soundFile, NULL, SND_ASYNC OR SND_LOOP OR SND_FILENAME
+ 00000513  68 00020009	   *	    push   +000020009h
+ 00000518  6A 00	   *	    push   +000000000h
+ 0000051A  68 00000000 R   *	    push   dword  ptr OFFSET FLAT: soundFile
+ 0000051F  E8 00000000 E   *	    call   PlaySoundA
+ 00000524  EB 0B		    jmp ToggleMusicEnd
+				    
+ 00000526			MuteBackgroundMusic:
+				    ; Mute - stop music
+				    INVOKE PlaySoundA, NULL, NULL, 0
+ 00000526  6A 00	   *	    push   +000000000h
+ 00000528  6A 00	   *	    push   +000000000h
+ 0000052A  6A 00	   *	    push   +000000000h
+ 0000052C  E8 00000000 E   *	    call   PlaySoundA
+
+ 00000531			ToggleMusicEnd:
+ 00000531  61			    popad
+ 00000532  C3			    ret
+ 00000533			ToggleMusic ENDP
+
+ 00000533			HandleVerticalMovement PROC
+				    ; Check which vertical movement key was pressed
+ 00000533  3C 77		    cmp al, 'w'                    ; Check for up movement
+ 00000535  74 09		    je MoveUp
+ 00000537  3C 73		    cmp al, 's'                    ; Check for down movement
+ 00000539  0F 84 0000019B	    je MoveDown
+ 0000053F  C3			    ret
+
+ 00000540			MoveUp:
+				    ; Check current scene for special interactions
+ 00000540  8A 1D 00000045 R	    mov bl, currentScene
+ 00000546  80 FB 01		    cmp bl, 1                     ; Temple scene
+ 00000549  74 17		    je CheckTempleUp
+ 0000054B  80 FB 02		    cmp bl, 2                     ; Left scene
+ 0000054E  0F 84 000000C9	    je CheckLeftSceneUp
+ 00000554  80 FB 03		    cmp bl, 3                     ; Door scene
+ 00000557  0F 84 0000010C	    je CheckDoorUp
+ 0000055D  E9 00000155		    jmp DoMoveUp                  ; Default movement if no special cases
+
+ 00000562			CheckTempleUp:
+				    ; Check for door interaction
+ 00000562  8A 1D 00000047 R	    mov bl, PlayerY
+ 00000568  FE CB		    dec bl                        ; Check position after potential move
+ 0000056A  80 FB 0B		    cmp bl, DOOR_Y
+ 0000056D  75 24		    jne CheckEyePos               ; If not at door height, check eye position
+
+				    ; Check if at door X position
+ 0000056F  8A 1D 00000046 R	    mov bl, PlayerX
+ 00000575  80 FB 17		    cmp bl, DOOR_X
+ 00000578  75 19		    jne CheckEyePos
+
+				    ; Check for win condition (both items)
+ 0000057A  E8 00000545		    call CheckBothItems
+ 0000057F  83 F8 01		    cmp eax, 1
+ 00000582  0F 85 0000012F	    jne DoMoveUp                  ; Continue normal movement if items missing
+
+				    ; Trigger win sequence
+ 00000588  E8 00000000 E	    call ClrScr
+ 0000058D  E8 000005B8		    call DrawWinScreen
+ 00000592  C3			    ret
+
+ 00000593			CheckEyePos:
+				    ; Check for eye symbol interaction
+ 00000593  8A 1D 00000047 R	    mov bl, PlayerY
+ 00000599  FE CB		    dec bl                        ; Look at next position
+ 0000059B  80 FB 08		    cmp bl, EYE_Y
+ 0000059E  75 1D		    jne CheckAltarUp
+				    
+				    ; Check if within eye X range
+ 000005A0  8A 1D 00000046 R	    mov bl, PlayerX
+ 000005A6  80 FB 13		    cmp bl, EYE_LEFT
+ 000005A9  7C 12		    jl CheckAltarUp
+ 000005AB  80 FB 21		    cmp bl, EYE_RIGHT
+ 000005AE  7F 0D		    jg CheckAltarUp
+				    
+				    ; Show eye dialogue
+ 000005B0  BA 00001226 R	    mov edx, OFFSET eyeDialogue
+ 000005B5  E8 0000052B		    call ShowDialogue
+ 000005BA  B0 01		    mov al, 1
+ 000005BC  C3			    ret
+				    
+ 000005BD			CheckAltarUp:
+				    ; Check for altar interaction
+ 000005BD  8A 1D 00000047 R	    mov bl, PlayerY
+ 000005C3  80 FB 09		    cmp bl, ALTAR_BOTTOM
+ 000005C6  0F 85 000000EB	    jne DoMoveUp
+				    
+				    ; Check if within altar X range
+ 000005CC  8A 1D 00000046 R	    mov bl, PlayerX
+ 000005D2  80 FB 37		    cmp bl, ALTAR_LEFT
+ 000005D5  0F 8C 000000DC	    jl DoMoveUp
+ 000005DB  80 FB 41		    cmp bl, ALTAR_RIGHT
+ 000005DE  0F 8F 000000D3	    jg DoMoveUp
+				    
+				    ; Check for both items
+ 000005E4  50			    push eax
+ 000005E5  E8 000004DA		    call CheckBothItems
+ 000005EA  83 F8 01		    cmp eax, 1
+ 000005ED  58			    pop eax
+ 000005EE  75 20		    jne ShowRegularAltarDialog
+				    
+				    ; Show special altar dialogue if both items present
+ 000005F0  BA 00001459 R	    mov edx, OFFSET specialAltarDialogue1
+ 000005F5  E8 000004EB		    call ShowDialogue
+
+ 000005FA			WaitForSpaceKey:
+ 000005FA  E8 00000000 E	    call ReadKey
+ 000005FF  74 F9		    jz WaitForSpaceKey
+				    
+ 00000601  3C 20		    cmp al, 20h                   ; Wait for space key
+ 00000603  75 F5		    jne WaitForSpaceKey
+				    
+				    ; Trigger win sequence
+ 00000605  E8 00000000 E	    call ClrScr
+ 0000060A  E8 0000053B		    call DrawWinScreen
+ 0000060F  C3			    ret
+
+ 00000610			ShowRegularAltarDialog:
+ 00000610  BA 000011E1 R	    mov edx, OFFSET altarDialogue
+ 00000615  E8 000004CB		    call ShowDialogue
+ 0000061A  B0 01		    mov al, 1
+ 0000061C  C3			    ret
+
+ 0000061D			CheckLeftSceneUp:
+				    ; Check for library interactions
+ 0000061D  8A 1D 00000047 R	    mov bl, PlayerY
+ 00000623  FE CB		    dec bl
+ 00000625  80 FB 08		    cmp bl, LIBRARY_INTERACT_Y
+ 00000628  0F 85 00000089	    jne DoMoveUp
+				    
+				    ; Check left library position
+ 0000062E  8A 1D 00000046 R	    mov bl, PlayerX
+ 00000634  80 FB 0D		    cmp bl, LEFT_LIBRARY_LEFT_X
+ 00000637  7C 19		    jl CheckRightLibrary
+ 00000639  80 FB 1C		    cmp bl, LEFT_LIBRARY_RIGHT_X
+ 0000063C  7F 14		    jg CheckRightLibrary
+				    
+				    ; Collect book and show dialogue
+ 0000063E  BA 000012F7 R	    mov edx, OFFSET leftLibraryDialogue
+ 00000643  E8 0000049D		    call ShowDialogue
+ 00000648  B0 01		    mov al, 1
+ 0000064A  C6 05 000014D6 R	    mov hasBook, 1
+	   01
+ 00000651  C3			    ret
+				    
+ 00000652			CheckRightLibrary:
+				    ; Check right library position
+ 00000652  80 FB 3A		    cmp bl, RIGHT_LIBRARY_LEFT_X
+ 00000655  7C 60		    jl DoMoveUp
+ 00000657  80 FB 49		    cmp bl, RIGHT_LIBRARY_RIGHT_X
+ 0000065A  7F 5B		    jg DoMoveUp
+				    
+				    ; Show right library dialogue
+ 0000065C  BA 00001332 R	    mov edx, OFFSET rightLibraryDialogue
+ 00000661  E8 0000047F		    call ShowDialogue
+ 00000666  B0 01		    mov al, 1
+ 00000668  C3			    ret
+				    
+ 00000669			CheckDoorUp:
+				    ; Check for painting interactions
+ 00000669  8A 1D 00000047 R	    mov bl, PlayerY
+ 0000066F  FE CB		    dec bl
+ 00000671  80 FB 08		    cmp bl, DOOR_PAINTING_Y
+ 00000674  75 41		    jne DoMoveUp
+				    
+				    ; Check painting position
+ 00000676  8A 1D 00000046 R	    mov bl, PlayerX
+ 0000067C  80 FB 0B		    cmp bl, DOOR_PAINTING_LEFT
+ 0000067F  7C 12		    jl CheckSpearsUp
+ 00000681  80 FB 30		    cmp bl, DOOR_PAINTING_RIGHT
+ 00000684  7F 0D		    jg CheckSpearsUp
+				    
+				    ; Show painting dialogue
+ 00000686  BA 000012A8 R	    mov edx, OFFSET doorPaintingDialogue
+ 0000068B  E8 00000455		    call ShowDialogue
+ 00000690  B0 01		    mov al, 1
+ 00000692  C3			    ret
+
+ 00000693			CheckSpearsUp:
+				    ; Check spear rack position
+ 00000693  8A 1D 00000046 R	    mov bl, PlayerX
+ 00000699  80 FB 34		    cmp bl, SPEAR_LEFT
+ 0000069C  7C 19		    jl DoMoveUp
+ 0000069E  80 FB 43		    cmp bl, SPEAR_RIGHT
+ 000006A1  7F 14		    jg DoMoveUp
+				    
+				    ; Collect spear and show dialogue
+ 000006A3  BA 00001261 R	    mov edx, OFFSET spearDialogue
+ 000006A8  E8 00000438		    call ShowDialogue
+ 000006AD  C6 05 000014D5 R	    mov hasSpear, 1
+	   01
+ 000006B4  B0 01		    mov al, 1
+ 000006B6  C3			    ret
+
+ 000006B7			DoMoveUp:
+				    ; Perform upward movement
+ 000006B7  E8 FFFFFB97		    call UpdatePlayer     
+ 000006BC  FE 0D 00000047 R	    dec PlayerY
+ 000006C2  80 3D 00000047 R	    cmp PlayerY, BORDER_TOP
+	   09
+ 000006C9  7D 07		    jge @F              
+ 000006CB  C6 05 00000047 R	    mov PlayerY, BORDER_TOP
+	   09
+ 000006D2			@@:
+ 000006D2  E8 FFFFFB61		    call DrawPlayer
+ 000006D7  B0 01		    mov al, 1
+ 000006D9  C3			    ret
+				    
+ 000006DA			MoveDown:
+				    ; Similar structure to MoveUp but for downward movement
+ 000006DA  8A 1D 00000045 R	    mov bl, currentScene
+ 000006E0  80 FB 01		    cmp bl, 1
+ 000006E3  74 13		    je CheckTempleDown
+ 000006E5  80 FB 02		    cmp bl, 2
+ 000006E8  74 3F		    je CheckLeftSceneDown
+ 000006EA  80 FB 03		    cmp bl, 3
+ 000006ED  0F 84 000000A4	    je CheckDoorDown
+ 000006F3  E9 000000ED		    jmp DoMoveDown
+
+ 000006F8			CheckTempleDown:
+				    ; Check for door interaction when moving down
+ 000006F8  8A 1D 00000047 R	    mov bl, PlayerY
+ 000006FE  FE C3		    inc bl                        ; Check position after potential move
+ 00000700  80 FB 0B		    cmp bl, DOOR_Y
+ 00000703  75 24		    jne CheckAltarDown
+
+ 00000705  8A 1D 00000046 R	    mov bl, PlayerX
+ 0000070B  80 FB 17		    cmp bl, DOOR_X
+ 0000070E  75 19		    jne CheckAltarDown
+				    
+				    ; Check win condition
+ 00000710  E8 000003AF		    call CheckBothItems
+ 00000715  83 F8 01		    cmp eax, 1
+ 00000718  0F 85 000000C7	    jne DoMoveDown
+				    
+ 0000071E  E8 00000000 E	    call ClrScr
+ 00000723  E8 00000422		    call DrawWinScreen
+ 00000728  C3			    ret
+
+ 00000729			CheckAltarDown:
+				    ; Fall through to next check if no altar interaction
+
+ 00000729			CheckLeftSceneDown:
+				    ; Check for library interactions
+ 00000729  8A 1D 00000047 R	    mov bl, PlayerY
+ 0000072F  FE C3		    inc bl
+ 00000731  80 FB 08		    cmp bl, LIBRARY_INTERACT_Y
+ 00000734  75 3F		    jne CheckCenterPaintingDown
+				    
+				    ; Check left library position
+ 00000736  8A 1D 00000046 R	    mov bl, PlayerX
+ 0000073C  80 FB 0D		    cmp bl, LEFT_LIBRARY_LEFT_X
+ 0000073F  7C 19		    jl CheckRightLibraryDown
+ 00000741  80 FB 1C		    cmp bl, LEFT_LIBRARY_RIGHT_X
+ 00000744  7F 14		    jg CheckRightLibraryDown
+				    
+				    ; Interact with left library
+ 00000746  BA 000012F7 R	    mov edx, OFFSET leftLibraryDialogue
+ 0000074B  E8 00000395		    call ShowDialogue
+ 00000750  B0 01		    mov al, 1
+ 00000752  C6 05 000014D6 R	    mov hasBook, 1
+	   01
+ 00000759  C3			    ret
+				    
+ 0000075A			CheckRightLibraryDown:
+ 0000075A  80 FB 3A		    cmp bl, RIGHT_LIBRARY_LEFT_X
+ 0000075D  0F 8C 00000082	    jl DoMoveDown
+ 00000763  80 FB 49		    cmp bl, RIGHT_LIBRARY_RIGHT_X
+ 00000766  7F 7D		    jg DoMoveDown
+				    
+				    ; Interact with right library
+ 00000768  BA 00001332 R	    mov edx, OFFSET rightLibraryDialogue
+ 0000076D  E8 00000373		    call ShowDialogue
+ 00000772  B0 01		    mov al, 1
+ 00000774  C3			    ret
+				    
+ 00000775			CheckCenterPaintingDown:
+				    ; Check for painting interaction
+ 00000775  80 FB 08		    cmp bl, CENTER_PAINTING_Y
+ 00000778  75 6B		    jne DoMoveDown
+				    
+				    ; Check if in painting X range
+ 0000077A  8A 1D 00000046 R	    mov bl, PlayerX
+ 00000780  80 FB 1E		    cmp bl, CENTER_PAINTING_LEFT_X
+ 00000783  7C 60		    jl DoMoveDown
+ 00000785  80 FB 38		    cmp bl, CENTER_PAINTING_RIGHT_X
+ 00000788  7F 5B		    jg DoMoveDown
+				    
+				    ; Show painting dialogue
+ 0000078A  BA 00001366 R	    mov edx, OFFSET centerPaintingDialogue
+ 0000078F  E8 00000351		    call ShowDialogue
+ 00000794  B0 01		    mov al, 1
+ 00000796  C3			    ret
+
+ 00000797			CheckDoorDown:
+				    ; Check for painting/spear interactions
+ 00000797  8A 1D 00000047 R	    mov bl, PlayerY
+ 0000079D  FE C3		    inc bl
+ 0000079F  80 FB 08		    cmp bl, DOOR_PAINTING_Y
+ 000007A2  75 41		    jne DoMoveDown
+				    
+				    ; Check painting position
+ 000007A4  8A 1D 00000046 R	    mov bl, PlayerX
+ 000007AA  80 FB 0B		    cmp bl, DOOR_PAINTING_LEFT
+ 000007AD  7C 12		    jl CheckSpearsDown
+ 000007AF  80 FB 30		    cmp bl, DOOR_PAINTING_RIGHT
+ 000007B2  7F 0D		    jg CheckSpearsDown
+				    
+				    ; Show painting dialogue
+ 000007B4  BA 000012A8 R	    mov edx, OFFSET doorPaintingDialogue
+ 000007B9  E8 00000327		    call ShowDialogue
+ 000007BE  B0 01		    mov al, 1
+ 000007C0  C3			    ret
+
+ 000007C1			CheckSpearsDown:
+				    ; Check spear rack position
+ 000007C1  8A 1D 00000046 R	    mov bl, PlayerX
+ 000007C7  80 FB 34		    cmp bl, SPEAR_LEFT
+ 000007CA  7C 19		    jl DoMoveDown
+ 000007CC  80 FB 43		    cmp bl, SPEAR_RIGHT
+ 000007CF  7F 14		    jg DoMoveDown
+				    
+				    ; Collect spear and show dialogue
+ 000007D1  BA 00001261 R	    mov edx, OFFSET spearDialogue
+ 000007D6  E8 0000030A		    call ShowDialogue
+ 000007DB  C6 05 000014D5 R	    mov hasSpear, 1
+	   01
+ 000007E2  B0 01		    mov al, 1
+ 000007E4  C3			    ret
+
+ 000007E5			DoMoveDown:
+				    ; Perform downward movement with boundary checking
+ 000007E5  E8 FFFFFA69		    call UpdatePlayer
+ 000007EA  FE 05 00000047 R	    inc PlayerY
+ 000007F0  80 3D 00000047 R	    cmp PlayerY, BORDER_BOTTOM
+	   0E
+ 000007F7  7E 07		    jle @F
+ 000007F9  C6 05 00000047 R	    mov PlayerY, BORDER_BOTTOM
+	   0E
+ 00000800			@@:
+ 00000800  E8 FFFFFA33		    call DrawPlayer
+ 00000805  B0 01		    mov al, 1
+ 00000807  C3			    ret
+
+ 00000808			HandleVerticalMovement ENDP
+
+ 00000808			HandleHorizontalMovement PROC
+				    ; Check movement direction
+ 00000808  3C 61		    cmp al, 'a'
+ 0000080A  74 09		    je ProcessLeft
+ 0000080C  3C 64		    cmp al, 'd'
+ 0000080E  0F 84 00000127	    je ProcessRight
+ 00000814  C3			    ret
+
+ 00000815			ProcessLeft:
+				    ; Check for scene transition
+ 00000815  A0 00000046 R	    mov al, playerX
+ 0000081A  3C 07		    cmp al, BORDER_LEFT
+ 0000081C  75 6C		    jne ContinueLeft
+				    
+				    ; Prevent multiple transitions
+ 0000081E  80 3D 000011D9 R	    cmp lastTransition, 1
+	   01
+ 00000825  74 63		    je ContinueLeft
+				    
+				    ; Check if in valid Y range for transition
+ 00000827  A0 00000047 R	    mov al, playerY
+ 0000082C  3C 0C		    cmp al, TRANSITION_Y_MIN
+ 0000082E  7C 5A		    jl ContinueLeft
+ 00000830  3C 0E		    cmp al, TRANSITION_Y_MAX
+ 00000832  7F 56		    jg ContinueLeft
+				    
+				    ; Set transition flag
+ 00000834  C6 05 000011D9 R	    mov lastTransition, 1
+	   01
+				    
+				    ; Handle scene transitions
+ 0000083B  A0 00000045 R	    mov al, currentScene
+ 00000840  3C 01		    cmp al, 1            ; From Temple to Left scene
+ 00000842  74 06		    je ToLeftRoom
+ 00000844  3C 03		    cmp al, 3            ; From Door back to Temple
+ 00000846  74 22		    je ToCenterFromRight
+ 00000848  EB 40		    jmp ContinueLeft
+
+ 0000084A			ToLeftRoom:              
+ 0000084A  C6 05 00000045 R	    mov currentScene, 2   
+	   02
+ 00000851  C6 05 00000046 R	    mov PlayerX, 70
+	   46
+ 00000858  E8 00000000 E	    call ClrScr
+ 0000085D  E8 FFFFFAA5		    call DrawLeftScene
+ 00000862  E8 FFFFF9D1		    call DrawPlayer
+ 00000867  B0 01		    mov al, 1
+ 00000869  C3			    ret
+				    
+ 0000086A			ToCenterFromRight:      
+ 0000086A  C6 05 00000045 R	    mov currentScene, 1  
+	   01
+ 00000871  C6 05 00000046 R	    mov PlayerX, 70
+	   46
+ 00000878  E8 00000000 E	    call ClrScr
+ 0000087D  E8 00000470		    call DrawTempleScene
+ 00000882  E8 FFFFF9B1		    call DrawPlayer
+ 00000887  B0 01		    mov al, 1
+ 00000889  C3			    ret
+
+ 0000088A			ContinueLeft:
+ 0000088A  C6 05 000011D9 R	    mov lastTransition, 0    ; Clear transition flag
+	   00
+ 00000891  E9 00000082		    jmp DoMoveLeft
+
+ 00000896			CheckTempleLeft:
+ 00000896  50			    push eax
+ 00000897  C6 05 00000045 R	    mov currentScene, 1
+	   01
+ 0000089E  C6 05 00000046 R	    mov PlayerX, RIGHT_SPAWN_X
+	   0F
+ 000008A5  E8 00000000 E	    call ClrScr
+ 000008AA  E8 00000443		    call DrawTempleScene
+ 000008AF  E8 FFFFF984		    call DrawPlayer
+ 000008B4  B0 01		    mov al, 1
+ 000008B6  C3			    ret
+
+ 000008B7			CheckLeftSceneLeft:
+				    ; Check library interactions
+ 000008B7  8A 1D 00000047 R	    mov bl, PlayerY
+ 000008BD  80 FB 08		    cmp bl, LIBRARY_INTERACT_Y
+ 000008C0  74 07		    je CheckLibraryCollisionLeft
+				    
+				    ; Check painting interactions
+ 000008C2  80 FB 08		    cmp bl, CENTER_PAINTING_Y
+ 000008C5  74 37		    je CheckPaintingCollisionLeft
+ 000008C7  EB 4F		    jmp DoMoveLeft
+				    
+ 000008C9			CheckLibraryCollisionLeft:
+ 000008C9  8A 1D 00000046 R	    mov bl, PlayerX
+ 000008CF  FE CB		    dec bl
+ 000008D1  80 FB 1C		    cmp bl, LEFT_LIBRARY_RIGHT_X
+ 000008D4  74 07		    je ShowLeftLibrary
+ 000008D6  80 FB 49		    cmp bl, RIGHT_LIBRARY_RIGHT_X
+ 000008D9  74 16		    je ShowRightLibrary
+ 000008DB  EB 3B		    jmp DoMoveLeft
+				    
+ 000008DD			ShowLeftLibrary:
+ 000008DD  BA 000012F7 R	    mov edx, OFFSET leftLibraryDialogue
+ 000008E2  E8 000001FE		    call ShowDialogue
+ 000008E7  B0 01		    mov al, 1
+ 000008E9  C6 05 000014D6 R	    mov hasBook, 1
+	   01
+ 000008F0  C3			    ret
+				    
+ 000008F1			ShowRightLibrary:
+ 000008F1  BA 00001332 R	    mov edx, OFFSET rightLibraryDialogue
+ 000008F6  E8 000001EA		    call ShowDialogue
+ 000008FB  B0 01		    mov al, 1
+ 000008FD  C3			    ret
+				    
+ 000008FE			CheckPaintingCollisionLeft:
+ 000008FE  8A 1D 00000046 R	    mov bl, PlayerX
+ 00000904  FE CB		    dec bl
+ 00000906  80 FB 38		    cmp bl, CENTER_PAINTING_RIGHT_X
+ 00000909  75 0D		    jne DoMoveLeft
+				    
+ 0000090B  BA 00001366 R	    mov edx, OFFSET centerPaintingDialogue
+ 00000910  E8 000001D0		    call ShowDialogue
+ 00000915  B0 01		    mov al, 1
+ 00000917  C3			    ret
+
+ 00000918			DoMoveLeft:
+ 00000918  E8 FFFFF936		    call UpdatePlayer
+ 0000091D  FE 0D 00000046 R	    dec PlayerX
+ 00000923  80 3D 00000046 R	    cmp PlayerX, BORDER_LEFT
+	   07
+ 0000092A  7D 07		    jge @F
+ 0000092C  C6 05 00000046 R	    mov PlayerX, BORDER_LEFT
+	   07
+ 00000933			@@:
+ 00000933  E8 FFFFF900		    call DrawPlayer
+ 00000938  B0 01		    mov al, 1
+ 0000093A  C3			    ret
+
+ 0000093B			ProcessRight:
+				    ; Check scene transition
+ 0000093B  A0 00000046 R	    mov al, playerX
+ 00000940  3C 4E		    cmp al, BORDER_RIGHT
+ 00000942  75 6C		    jne ContinueRight
+				    
+				    ; Prevent multiple transitions
+ 00000944  80 3D 000011D9 R	    cmp lastTransition, 1
+	   01
+ 0000094B  74 63		    je ContinueRight
+				    
+				    ; Check valid Y position for transition
+ 0000094D  A0 00000047 R	    mov al, playerY
+ 00000952  3C 0C		    cmp al, TRANSITION_Y_MIN
+ 00000954  7C 5A		    jl ContinueRight
+ 00000956  3C 0E		    cmp al, TRANSITION_Y_MAX
+ 00000958  7F 56		    jg ContinueRight
+				    
+				    ; Set transition flag
+ 0000095A  C6 05 000011D9 R	    mov lastTransition, 1
+	   01
+				    
+				    ; Handle scene transitions
+ 00000961  A0 00000045 R	    mov al, currentScene
+ 00000966  3C 01		    cmp al, 1            ; Temple to Door scene
+ 00000968  74 26		    je ToRightRoom
+ 0000096A  3C 02		    cmp al, 2            ; Left to Temple
+ 0000096C  74 02		    je ToCenterFromLeft
+ 0000096E  EB 40		    jmp ContinueRight
+
+ 00000970			ToCenterFromLeft:       
+ 00000970  C6 05 00000045 R	    mov currentScene, 1
+	   01
+ 00000977  C6 05 00000046 R	    mov PlayerX, RIGHT_SPAWN_X
+	   0F
+ 0000097E  E8 00000000 E	    call ClrScr
+ 00000983  E8 0000036A		    call DrawTempleScene
+ 00000988  E8 FFFFF8AB		    call DrawPlayer
+ 0000098D  B0 01		    mov al, 1
+ 0000098F  C3			    ret
+				    
+ 00000990			ToRightRoom:           
+ 00000990  C6 05 00000045 R	    mov currentScene, 3
+	   03
+ 00000997  C6 05 00000046 R	    mov PlayerX, RIGHT_SPAWN_X
+	   0F
+ 0000099E  E8 00000000 E	    call ClrScr
+ 000009A3  E8 00000480		    call DrawDoorScene
+ 000009A8  E8 FFFFF88B		    call DrawPlayer
+ 000009AD  B0 01		    mov al, 1
+ 000009AF  C3			    ret
+
+ 000009B0			ContinueRight:
+ 000009B0  C6 05 000011D9 R	    mov lastTransition, 0
+	   00
+ 000009B7  EB 25		    jmp DoMoveRight
+
+ 000009B9			CheckTempleRight:
+				    ; Check altar interaction
+ 000009B9  8A 1D 00000047 R	    mov bl, PlayerY
+ 000009BF  80 FB 08		    cmp bl, ALTAR_TOP
+ 000009C2  75 1A		    jne DoMoveRight
+				    
+ 000009C4  8A 1D 00000046 R	    mov bl, PlayerX
+ 000009CA  FE C3		    inc bl
+ 000009CC  80 FB 37		    cmp bl, ALTAR_LEFT
+ 000009CF  75 0D		    jne DoMoveRight
+				    
+ 000009D1  BA 000011E1 R	    mov edx, OFFSET altarDialogue
+ 000009D6  E8 0000010A		    call ShowDialogue
+ 000009DB  B0 01		    mov al, 1
+ 000009DD  C3			    ret
+
+ 000009DE			DoMoveRight:
+ 000009DE  E8 FFFFF870		    call UpdatePlayer
+ 000009E3  FE 05 00000046 R	    inc PlayerX
+ 000009E9  80 3D 00000046 R	    cmp PlayerX, BORDER_RIGHT
+	   4E
+ 000009F0  7E 07		    jle @F
+ 000009F2  C6 05 00000046 R	    mov PlayerX, BORDER_RIGHT
+	   4E
+ 000009F9			@@:
+ 000009F9  E8 FFFFF83A		    call DrawPlayer
+ 000009FE  B0 01		    mov al, 1
+ 00000A00  C3			    ret
+
+ 00000A01			HandleHorizontalMovement ENDP
+
+ 00000A01			DrawInventory PROC
+ 00000A01  60			    pushad
+				    
+				    ; Draw inventory box title
+ 00000A02  B2 55		    mov dl, 85
+ 00000A04  B6 05		    mov dh, 5
+ 00000A06  E8 00000000 E	    call Gotoxy
+ 00000A0B  BA 000014D8 R	    mov edx, OFFSET inventoryTitle
+ 00000A10  E8 00000000 E	    call WriteString
+				    
+				    ; Draw top border
+ 00000A15  B2 53		    mov dl, 83
+ 00000A17  B6 06		    mov dh, 6
+ 00000A19  E8 00000000 E	    call Gotoxy
+ 00000A1E  B0 2B		    mov al, '+'
+ 00000A20  E8 00000000 E	    call WriteChar
+ 00000A25  B9 00000019		    mov ecx, inventoryWidth
+ 00000A2A  B0 2D		    mov al, '-'
+ 00000A2C			DrawTopBorder:
+ 00000A2C  E8 00000000 E	    call WriteChar
+ 00000A31  E2 F9		    loop DrawTopBorder
+ 00000A33  B0 2B		    mov al, '+'
+ 00000A35  E8 00000000 E	    call WriteChar
+				    
+				    ; Draw side borders
+ 00000A3A  B9 00000005		    mov ecx, inventoryHeight
+ 00000A3F			DrawSides:
+				    ; Left border
+ 00000A3F  B2 53		    mov dl, 83
+ 00000A41  FE C6		    inc dh
+ 00000A43  E8 00000000 E	    call Gotoxy
+ 00000A48  B0 7C		    mov al, '|'
+ 00000A4A  E8 00000000 E	    call WriteChar
+				    
+				    ; Right border
+ 00000A4F  B2 53		    mov dl, 83
+ 00000A51  80 C2 19		    add dl, inventoryWidth
+ 00000A54  80 C2 01		    add dl, 1
+ 00000A57  E8 00000000 E	    call Gotoxy
+ 00000A5C  B0 7C		    mov al, '|'
+ 00000A5E  E8 00000000 E	    call WriteChar
+ 00000A63  E2 DA		    loop DrawSides
+				    
+				    ; Draw bottom border
+ 00000A65  B2 53		    mov dl, 83
+ 00000A67  FE C6		    inc dh
+ 00000A69  E8 00000000 E	    call Gotoxy
+ 00000A6E  B0 2B		    mov al, '+'
+ 00000A70  E8 00000000 E	    call WriteChar
+ 00000A75  B9 00000019		    mov ecx, inventoryWidth
+ 00000A7A  B0 2D		    mov al, '-'
+ 00000A7C			DrawBottomBorder:
+ 00000A7C  E8 00000000 E	    call WriteChar
+ 00000A81  E2 F9		    loop DrawBottomBorder
+ 00000A83  B0 2B		    mov al, '+'
+ 00000A85  E8 00000000 E	    call WriteChar
+				    
+				    ; Display collected items
+ 00000A8A  B2 55		    mov dl, 85
+ 00000A8C  B6 08		    mov dh, 8
+ 00000A8E  E8 00000000 E	    call Gotoxy
+ 00000A93  80 3D 000014D5 R	    cmp hasSpear, 1
+	   01
+ 00000A9A  75 0A		    jne CheckBook
+ 00000A9C  BA 000014E3 R	    mov edx, OFFSET spearItem
+ 00000AA1  E8 00000000 E	    call WriteString
+				    
+ 00000AA6			CheckBook:
+ 00000AA6  B2 55		    mov dl, 85
+ 00000AA8  B6 0A		    mov dh, 10
+ 00000AAA  E8 00000000 E	    call Gotoxy
+ 00000AAF  80 3D 000014D6 R	    cmp hasBook, 1
+	   01
+ 00000AB6  75 0A		    jne FinishInventory
+ 00000AB8  BA 000014EB R	    mov edx, OFFSET bookItem
+ 00000ABD  E8 00000000 E	    call WriteString
+				    
+ 00000AC2			FinishInventory:
+ 00000AC2  61			    popad
+ 00000AC3  C3			    ret
+ 00000AC4			DrawInventory ENDP
+
+ 00000AC4			CheckBothItems PROC
+ 00000AC4  60			    pushad
+				    
+				    ; Check if player has spear
+ 00000AC5  A0 000014D5 R	    mov al, hasSpear
+ 00000ACA  3C 01		    cmp al, 1
+ 00000ACC  75 10		    jne DoNotHaveItems
+				    
+				    ; Check if player has book
+ 00000ACE  A0 000014D6 R	    mov al, hasBook
+ 00000AD3  3C 01		    cmp al, 1
+ 00000AD5  75 07		    jne DoNotHaveItems
+				    
+				    ; Have both items
+ 00000AD7  B8 00000001		    mov eax, 1
+ 00000ADC  61			    popad
+ 00000ADD  C3			    ret
+				    
+ 00000ADE			DoNotHaveItems:
+ 00000ADE  B8 00000000		    mov eax, 0
+ 00000AE3  61			    popad
+ 00000AE4  C3			    ret
+ 00000AE5			CheckBothItems ENDP
+
+ 00000AE5			ShowDialogue PROC
+ 00000AE5  60			    pushad
+ 00000AE6  52			    push edx                ; Save dialogue text pointer
+				    
+				    ; Clear dialogue area
+ 00000AE7  E8 FFFFF951		    call ClearDialogueArea
+				    
+				    ; Ensure player remains visible
+ 00000AEC  E8 FFFFF747		    call DrawPlayer
+				    
+				    ; Draw dialogue box top border
+ 00000AF1  B2 0A		    mov dl, 10
+ 00000AF3  B6 14		    mov dh, 20
+ 00000AF5  E8 00000000 E	    call Gotoxy
+ 00000AFA  B9 0000003C		    mov ecx, 60
+ 00000AFF  B0 2D		    mov al, '-'
+ 00000B01			BorderTop:
+ 00000B01  E8 00000000 E	    call WriteChar
+ 00000B06  E2 F9		    loop BorderTop
+				    
+				    ; Display dialogue text
+ 00000B08  B2 0A		    mov dl, 10
+ 00000B0A  B6 15		    mov dh, 21
+ 00000B0C  E8 00000000 E	    call Gotoxy
+ 00000B11  5A			    pop edx
+ 00000B12  E8 00000000 E	    call WriteString
+				    
+				    ; Draw bottom border
+ 00000B17  B2 0A		    mov dl, 10
+ 00000B19  B6 16		    mov dh, 22
+ 00000B1B  E8 00000000 E	    call Gotoxy
+ 00000B20  B9 0000003C		    mov ecx, 60
+ 00000B25  B0 2D		    mov al, '-'
+ 00000B27			BorderBottom:
+ 00000B27  E8 00000000 E	    call WriteChar
+ 00000B2C  E2 F9		    loop BorderBottom
+				    
+				    ; Show continue prompt
+ 00000B2E  B2 0A		    mov dl, 10
+ 00000B30  B6 17		    mov dh, 23
+ 00000B32  E8 00000000 E	    call Gotoxy
+ 00000B37  BA 0000028B R	    mov edx, OFFSET continuePrompt
+ 00000B3C  E8 00000000 E	    call WriteString
+				    
+				    ; Set dialogue active flag
+ 00000B41  C6 05 000011DA R	    mov isDialogueActive, 1
+	   01
+				    
+ 00000B48  61			    popad
+ 00000B49  C3			    ret
+ 00000B4A			ShowDialogue ENDP
+
+ 00000B4A			DrawWinScreen PROC
+ 00000B4A  E8 00000000 E	    call ClrScr
+				    
+				    ; Display victory message
+ 00000B4F  B2 19		    mov dl, 25
+ 00000B51  B6 0A		    mov dh, 10
+ 00000B53  E8 00000000 E	    call Gotoxy
+				    mWrite "Congratulations! You have won the game!"
+ 000015F3		     1		.data		
+ 000015F3 43 6F 6E 67 72     1		??0007 BYTE "Congratulations! You have won the game!",0	
+	   61 74 75 6C 61
+	   74 69 6F 6E 73
+	   21 20 59 6F 75
+	   20 68 61 76 65
+	   20 77 6F 6E 20
+	   74 68 65 20 67
+	   61 6D 65 21 00
+ 00000B58		     1		.code
+ 00000B58  52		     1		push	edx
+ 00000B59  BA 000015F3 R     1		mov	edx,OFFSET ??0007
+ 00000B5E  E8 00000000 E     1		call	WriteString
+ 00000B63  5A		     1		pop	edx
+				    
+ 00000B64  B2 19		    mov dl, 25
+ 00000B66  B6 0C		    mov dh, 12
+ 00000B68  E8 00000000 E	    call Gotoxy
+				    mWrite "You have successfully completed the temple's ritual."
+ 0000161B		     1		.data		
+ 0000161B 59 6F 75 20 68     1		??0008 BYTE "You have successfully completed the temple's ritual.",0	
+	   61 76 65 20 73
+	   75 63 63 65 73
+	   73 66 75 6C 6C
+	   79 20 63 6F 6D
+	   70 6C 65 74 65
+	   64 20 74 68 65
+	   20 74 65 6D 70
+	   6C 65 27 73 20
+	   72 69 74 75 61
+	   6C 2E 00
+ 00000B6D		     1		.code
+ 00000B6D  52		     1		push	edx
+ 00000B6E  BA 0000161B R     1		mov	edx,OFFSET ??0008
+ 00000B73  E8 00000000 E     1		call	WriteString
+ 00000B78  5A		     1		pop	edx
+				    
+ 00000B79  B2 19		    mov dl, 25
+ 00000B7B  B6 0E		    mov dh, 14
+ 00000B7D  E8 00000000 E	    call Gotoxy
+				    mWrite "Press any key to exit..."
+ 00001650		     1		.data		
+ 00001650 50 72 65 73 73     1		??0009 BYTE "Press any key to exit...",0	
+	   20 61 6E 79 20
+	   6B 65 79 20 74
+	   6F 20 65 78 69
+	   74 2E 2E 2E 00
+ 00000B82		     1		.code
+ 00000B82  52		     1		push	edx
+ 00000B83  BA 00001650 R     1		mov	edx,OFFSET ??0009
+ 00000B88  E8 00000000 E     1		call	WriteString
+ 00000B8D  5A		     1		pop	edx
+				    
+ 00000B8E  E8 00000000 E	    call ReadChar
+ 00000B93  E8 FFFFF535		    call ExitGameProcedure
+ 00000B98  C3			    ret
+ 00000B99			DrawWinScreen ENDP
+
+ 00000B99			DrawMusicStatus PROC
+ 00000B99  60			    pushad
+				    
+				    ; Display mute toggle instruction
+ 00000B9A  B2 02		    mov dl, 2
+ 00000B9C  B6 11		    mov dh, 17
+ 00000B9E  E8 00000000 E	    call Gotoxy
+ 00000BA3  BA 0000000E R	    mov edx, OFFSET muteMessage
+ 00000BA8  E8 00000000 E	    call WriteString
+				    
+				    ; Display current music status
+ 00000BAD  B2 1E		    mov dl, 30
+ 00000BAF  B6 11		    mov dh, 17
+ 00000BB1  E8 00000000 E	    call Gotoxy
+ 00000BB6  80 3D 0000000D R	    cmp isMuted, 1
+	   01
+ 00000BBD  74 07		    je ShowMutedStatus
+ 00000BBF  BA 00000033 R	    mov edx, OFFSET unmutedStatus
+ 00000BC4  EB 05		    jmp DisplayMuteStatus
+ 00000BC6			ShowMutedStatus:
+ 00000BC6  BA 00000026 R	    mov edx, OFFSET mutedStatus
+ 00000BCB			DisplayMuteStatus:
+ 00000BCB  E8 00000000 E	    call WriteString
+				    
+ 00000BD0  61			    popad
+ 00000BD1  C3			    ret
+ 00000BD2			DrawMusicStatus ENDP
+
+ 00000BD2			CheckInteractions PROC
+ 00000BD2  60			    pushad
+				    
+				    ; Skip if dialogue is already active
+ 00000BD3  80 3D 000011DA R	    cmp isDialogueActive, 1
+	   01
+ 00000BDA  0F 84 000000E2	    je ExitInteractions
+				    
+				    ; Check current scene for interactions
+ 00000BE0  A0 00000045 R	    mov al, currentScene
+ 00000BE5  3C 03		    cmp al, 3              ; Door scene (spears)
+ 00000BE7  74 06		    je CheckSpearInteraction
+ 00000BE9  3C 02		    cmp al, 2              ; Left scene (book)
+ 00000BEB  74 44		    je CheckBookInteraction
+ 00000BED  EB 76		    jmp CheckAltarInteraction
+				    
+ 00000BEF			CheckSpearInteraction:
+				    ; Verify spear height
+ 00000BEF  A0 00000047 R	    mov al, PlayerY
+ 00000BF4  3C 08		    cmp al, SPEAR_Y
+ 00000BF6  0F 85 000000C6	    jne ExitInteractions
+				    
+				    ; Check X position
+ 00000BFC  A0 00000046 R	    mov al, PlayerX
+ 00000C01  3C 34		    cmp al, SPEAR_LEFT
+ 00000C03  0F 8C 000000B9	    jl ExitInteractions
+ 00000C09  3C 43		    cmp al, SPEAR_RIGHT
+ 00000C0B  0F 8F 000000B1	    jg ExitInteractions
+				    
+				    ; Set spear collected and show dialogue
+ 00000C11  C6 05 000014D5 R	    mov hasSpear, 1
+	   01
+ 00000C18  BA 000013A0 R	    mov edx, OFFSET spearCollectDialogue
+ 00000C1D  E8 FFFFFEC3		    call ShowDialogue
+ 00000C22  E9 0000009B		    jmp ExitInteractions
+				    
+ 00000C27			SpearAlreadyCollected:
+ 00000C27  BA 0000141C R	    mov edx, OFFSET spearExaminedDialogue
+ 00000C2C  E9 00000087		    jmp ShowInteractionDialogue
+				    
+ 00000C31			CheckBookInteraction:
+				    ; Check library height
+ 00000C31  A0 00000047 R	    mov al, PlayerY
+ 00000C36  3C 08		    cmp al, LIBRARY_INTERACT_Y
+ 00000C38  0F 85 00000084	    jne ExitInteractions
+				    
+				    ; Check left library range
+ 00000C3E  A0 00000046 R	    mov al, PlayerX
+ 00000C43  3C 0D		    cmp al, LEFT_LIBRARY_LEFT_X
+ 00000C45  7C 7B		    jl ExitInteractions
+ 00000C47  3C 1C		    cmp al, LEFT_LIBRARY_RIGHT_X
+ 00000C49  7F 77		    jg ExitInteractions
+				    
+				    ; Set book collected and show dialogue
+ 00000C4B  C6 05 000014D6 R	    mov hasBook, 1
+	   01
+ 00000C52  BA 000013E4 R	    mov edx, OFFSET bookCollectDialogue
+ 00000C57  E8 FFFFFE89		    call ShowDialogue
+ 00000C5C  EB 64		    jmp ExitInteractions
+
+ 00000C5E			BookAlreadyCollected:
+ 00000C5E  BA 0000143A R	    mov edx, OFFSET bookExaminedDialogue
+ 00000C63  EB 53		    jmp ShowInteractionDialogue
+				    
+ 00000C65			CheckAltarInteraction:
+				    ; Verify temple room
+ 00000C65  A0 00000045 R	    mov al, currentScene
+ 00000C6A  3C 01		    cmp al, 1
+ 00000C6C  75 54		    jne ExitInteractions
+
+				    ; Check altar position
+ 00000C6E  A0 00000047 R	    mov al, PlayerY
+ 00000C73  3C 09		    cmp al, ALTAR_BOTTOM
+ 00000C75  75 4B		    jne ExitInteractions
+
+ 00000C77  A0 00000046 R	    mov al, PlayerX
+ 00000C7C  3C 37		    cmp al, ALTAR_LEFT
+ 00000C7E  7C 42		    jl ExitInteractions
+ 00000C80  3C 41		    cmp al, ALTAR_RIGHT
+ 00000C82  7F 3E		    jg ExitInteractions
+
+				    ; Check for both items
+ 00000C84  A0 000014D5 R	    mov al, hasSpear
+ 00000C89  3C 01		    cmp al, 1
+ 00000C8B  75 1F		    jne ShowRegularAltar
+				    
+ 00000C8D  A0 000014D6 R	    mov al, hasBook
+ 00000C92  3C 01		    cmp al, 1
+ 00000C94  75 16		    jne ShowRegularAltar
+
+				    ; Show victory dialogue if both items present
+ 00000C96  BA 00001459 R	    mov edx, OFFSET specialAltarDialogue1
+ 00000C9B  E8 FFFFFE45		    call ShowDialogue
+ 00000CA0  E8 00000000 E	    call ClrScr
+ 00000CA5  E8 FFFFFEA0		    call DrawWinScreen
+ 00000CAA  EB 16		    jmp ExitInteractions
+
+ 00000CAC			ShowRegularAltar:
+ 00000CAC  BA 000011E1 R	    mov edx, OFFSET altarDialogue
+ 00000CB1  E8 FFFFFE2F		    call ShowDialogue
+ 00000CB6  EB 0A		    jmp ExitInteractions
+				    
+ 00000CB8			ShowInteractionDialogue:
+ 00000CB8  E8 FFFFFE28		    call ShowDialogue
+ 00000CBD  E8 FFFFFD3F		    call DrawInventory
+				    
+ 00000CC2			ExitInteractions:
+ 00000CC2  61			    popad
+ 00000CC3  C3			    ret
+ 00000CC4			CheckInteractions ENDP
+
+ 00000CC4			HaveBothItems PROC
+ 00000CC4  60			    pushad
+				    
+				    ; Mark special dialogue active
+ 00000CC5  C6 05 000011DF R	    mov isSpecialDialogue, 1
+	   01
+				    
+				    ; Show victory dialogue
+ 00000CCC  B2 08		    mov dl, 8
+ 00000CCE  B6 11		    mov dh, 17
+ 00000CD0  E8 00000000 E	    call Gotoxy
+ 00000CD5  BA 00001459 R	    mov edx, OFFSET specialAltarDialogue1
+ 00000CDA  E8 FFFFFE06		    call ShowDialogue
+				    
+				    ; Set game completion flag
+ 00000CDF  C6 05 000011E0 R	    mov isGameEnded, 1
+	   01
+				    
+				    ; Transition to win screen
+ 00000CE6  E8 00000000 E	    call ClrScr
+ 00000CEB  E8 FFFFFE5A		    call DrawWinScreen
+				    
+ 00000CF0  61			    popad
+ 00000CF1  C3			    ret
+ 00000CF2			HaveBothItems ENDP
+
+ 00000CF2			DrawTempleScene PROC
+				    ; Draw the complete temple room layout line by line
+ 00000CF2  B2 00		    mov dl, 0
+ 00000CF4  B6 00		    mov dh, 0
+ 00000CF6  E8 00000000 E	    call Gotoxy
+ 00000CFB  BA 000002A3 R	    mov edx, OFFSET sceneTemple1
+ 00000D00  E8 00000000 E	    call WriteString
+				    
+ 00000D05  B2 00		    mov dl, 0
+ 00000D07  B6 01		    mov dh, 1
+ 00000D09  E8 00000000 E	    call Gotoxy
+ 00000D0E  BA 000002F4 R	    mov edx, OFFSET sceneTemple2
+ 00000D13  E8 00000000 E	    call WriteString
+				    
+ 00000D18  B2 00		    mov dl, 0
+ 00000D1A  B6 02		    mov dh, 2
+ 00000D1C  E8 00000000 E	    call Gotoxy
+ 00000D21  BA 00000345 R	    mov edx, OFFSET sceneTemple3
+ 00000D26  E8 00000000 E	    call WriteString
+				    
+ 00000D2B  B2 00		    mov dl, 0
+ 00000D2D  B6 03		    mov dh, 3
+ 00000D2F  E8 00000000 E	    call Gotoxy
+ 00000D34  BA 00000396 R	    mov edx, OFFSET sceneTemple4
+ 00000D39  E8 00000000 E	    call WriteString
+				    
+ 00000D3E  B2 00		    mov dl, 0
+ 00000D40  B6 04		    mov dh, 4
+ 00000D42  E8 00000000 E	    call Gotoxy
+ 00000D47  BA 000003E7 R	    mov edx, OFFSET sceneTemple5
+ 00000D4C  E8 00000000 E	    call WriteString
+				    
+ 00000D51  B2 00		    mov dl, 0
+ 00000D53  B6 05		    mov dh, 5
+ 00000D55  E8 00000000 E	    call Gotoxy
+ 00000D5A  BA 00000438 R	    mov edx, OFFSET sceneTemple6
+ 00000D5F  E8 00000000 E	    call WriteString
+				    
+ 00000D64  B2 00		    mov dl, 0
+ 00000D66  B6 06		    mov dh, 6
+ 00000D68  E8 00000000 E	    call Gotoxy
+ 00000D6D  BA 00000489 R	    mov edx, OFFSET sceneTemple7
+ 00000D72  E8 00000000 E	    call WriteString
+				    
+ 00000D77  B2 00		    mov dl, 0
+ 00000D79  B6 07		    mov dh, 7
+ 00000D7B  E8 00000000 E	    call Gotoxy
+ 00000D80  BA 000004DA R	    mov edx, OFFSET sceneTemple8
+ 00000D85  E8 00000000 E	    call WriteString
+				    
+ 00000D8A  B2 00		    mov dl, 0
+ 00000D8C  B6 08		    mov dh, 8
+ 00000D8E  E8 00000000 E	    call Gotoxy
+ 00000D93  BA 0000052B R	    mov edx, OFFSET sceneTemple9
+ 00000D98  E8 00000000 E	    call WriteString
+				    
+ 00000D9D  B2 00		    mov dl, 0
+ 00000D9F  B6 09		    mov dh, 9
+ 00000DA1  E8 00000000 E	    call Gotoxy
+ 00000DA6  BA 0000057C R	    mov edx, OFFSET sceneTemple10
+ 00000DAB  E8 00000000 E	    call WriteString
+				    
+ 00000DB0  B2 00		    mov dl, 0
+ 00000DB2  B6 0A		    mov dh, 10
+ 00000DB4  E8 00000000 E	    call Gotoxy
+ 00000DB9  BA 000005CD R	    mov edx, OFFSET sceneTemple11
+ 00000DBE  E8 00000000 E	    call WriteString
+				    
+ 00000DC3  B2 00		    mov dl, 0
+ 00000DC5  B6 0B		    mov dh, 11
+ 00000DC7  E8 00000000 E	    call Gotoxy
+ 00000DCC  BA 0000061E R	    mov edx, OFFSET sceneTemple12
+ 00000DD1  E8 00000000 E	    call WriteString
+				    
+ 00000DD6  B2 00		    mov dl, 0
+ 00000DD8  B6 0C		    mov dh, 12
+ 00000DDA  E8 00000000 E	    call Gotoxy
+ 00000DDF  BA 00000670 R	    mov edx, OFFSET sceneTemple13
+ 00000DE4  E8 00000000 E	    call WriteString
+				    
+ 00000DE9  B2 00		    mov dl, 0
+ 00000DEB  B6 0D		    mov dh, 13
+ 00000DED  E8 00000000 E	    call Gotoxy
+ 00000DF2  BA 000006C3 R	    mov edx, OFFSET sceneTemple14
+ 00000DF7  E8 00000000 E	    call WriteString
+				    
+ 00000DFC  B2 00		    mov dl, 0
+ 00000DFE  B6 0E		    mov dh, 14
+ 00000E00  E8 00000000 E	    call Gotoxy
+ 00000E05  BA 00000714 R	    mov edx, OFFSET sceneTemple15
+ 00000E0A  E8 00000000 E	    call WriteString
+				    
+ 00000E0F  B2 00		    mov dl, 0
+ 00000E11  B6 0F		    mov dh, 15
+ 00000E13  E8 00000000 E	    call Gotoxy
+ 00000E18  BA 00000765 R	    mov edx, OFFSET sceneTemple16
+ 00000E1D  E8 00000000 E	    call WriteString
+
+ 00000E22  E8 FFFFFBDA		    call DrawInventory
+ 00000E27  C3			    ret
+ 00000E28			DrawTempleScene ENDP
+
+ 00000E28			DrawDoorScene PROC
+				    ; Draw the complete door room layout line by line
+ 00000E28  B2 00		    mov dl, 0
+ 00000E2A  B6 00		    mov dh, 0
+ 00000E2C  E8 00000000 E	    call Gotoxy
+ 00000E31  BA 000007B6 R	    mov edx, OFFSET sceneDoor1
+ 00000E36  E8 00000000 E	    call WriteString
+				    
+ 00000E3B  B2 00		    mov dl, 0
+ 00000E3D  B6 01		    mov dh, 1
+ 00000E3F  E8 00000000 E	    call Gotoxy
+ 00000E44  BA 00000807 R	    mov edx, OFFSET sceneDoor2
+ 00000E49  E8 00000000 E	    call WriteString
+				    
+ 00000E4E  B2 00		    mov dl, 0
+ 00000E50  B6 02		    mov dh, 2
+ 00000E52  E8 00000000 E	    call Gotoxy
+ 00000E57  BA 00000858 R	    mov edx, OFFSET sceneDoor3
+ 00000E5C  E8 00000000 E	    call WriteString
+				    
+ 00000E61  B2 00		    mov dl, 0
+ 00000E63  B6 03		    mov dh, 3
+ 00000E65  E8 00000000 E	    call Gotoxy
+ 00000E6A  BA 000008A9 R	    mov edx, OFFSET sceneDoor4
+ 00000E6F  E8 00000000 E	    call WriteString
+				    
+ 00000E74  B2 00		    mov dl, 0
+ 00000E76  B6 04		    mov dh, 4
+ 00000E78  E8 00000000 E	    call Gotoxy
+ 00000E7D  BA 000008FA R	    mov edx, OFFSET sceneDoor5
+ 00000E82  E8 00000000 E	    call WriteString
+				    
+ 00000E87  B2 00		    mov dl, 0
+ 00000E89  B6 05		    mov dh, 5
+ 00000E8B  E8 00000000 E	    call Gotoxy
+ 00000E90  BA 0000094B R	    mov edx, OFFSET sceneDoor6
+ 00000E95  E8 00000000 E	    call WriteString
+				    
+ 00000E9A  B2 00		    mov dl, 0
+ 00000E9C  B6 06		    mov dh, 6
+ 00000E9E  E8 00000000 E	    call Gotoxy
+ 00000EA3  BA 0000099C R	    mov edx, OFFSET sceneDoor7
+ 00000EA8  E8 00000000 E	    call WriteString
+				    
+ 00000EAD  B2 00		    mov dl, 0
+ 00000EAF  B6 07		    mov dh, 7
+ 00000EB1  E8 00000000 E	    call Gotoxy
+ 00000EB6  BA 000009ED R	    mov edx, OFFSET sceneDoor8
+ 00000EBB  E8 00000000 E	    call WriteString
+				    
+ 00000EC0  B2 00		    mov dl, 0
+ 00000EC2  B6 08		    mov dh, 8
+ 00000EC4  E8 00000000 E	    call Gotoxy
+ 00000EC9  BA 00000A3E R	    mov edx, OFFSET sceneDoor9
+ 00000ECE  E8 00000000 E	    call WriteString
+				    
+ 00000ED3  B2 00		    mov dl, 0
+ 00000ED5  B6 09		    mov dh, 9
+ 00000ED7  E8 00000000 E	    call Gotoxy
+ 00000EDC  BA 00000A8F R	    mov edx, OFFSET sceneDoor10
+ 00000EE1  E8 00000000 E	    call WriteString
+				    
+ 00000EE6  B2 00		    mov dl, 0
+ 00000EE8  B6 0A		    mov dh, 10
+ 00000EEA  E8 00000000 E	    call Gotoxy
+ 00000EEF  BA 00000AE0 R	    mov edx, OFFSET sceneDoor11
+ 00000EF4  E8 00000000 E	    call WriteString
+				    
+ 00000EF9  B2 00		    mov dl, 0
+ 00000EFB  B6 0B		    mov dh, 11
+ 00000EFD  E8 00000000 E	    call Gotoxy
+ 00000F02  BA 00000B31 R	    mov edx, OFFSET sceneDoor12
+ 00000F07  E8 00000000 E	    call WriteString
+				    
+ 00000F0C  B2 00		    mov dl, 0
+ 00000F0E  B6 0C		    mov dh, 12
+ 00000F10  E8 00000000 E	    call Gotoxy
+ 00000F15  BA 00000B82 R	    mov edx, OFFSET sceneDoor13
+ 00000F1A  E8 00000000 E	    call WriteString
+				    
+ 00000F1F  B2 00		    mov dl, 0
+ 00000F21  B6 0D		    mov dh, 13
+ 00000F23  E8 00000000 E	    call Gotoxy
+ 00000F28  BA 00000BD3 R	    mov edx, OFFSET sceneDoor14
+ 00000F2D  E8 00000000 E	    call WriteString
+				    
+ 00000F32  B2 00		    mov dl, 0
+ 00000F34  B6 0E		    mov dh, 14
+ 00000F36  E8 00000000 E	    call Gotoxy
+ 00000F3B  BA 00000C24 R	    mov edx, OFFSET sceneDoor15
+ 00000F40  E8 00000000 E	    call WriteString
+				    
+ 00000F45  B2 00		    mov dl, 0
+ 00000F47  B6 0F		    mov dh, 15
+ 00000F49  E8 00000000 E	    call Gotoxy
+ 00000F4E  BA 00000C75 R	    mov edx, OFFSET sceneDoor16
+ 00000F53  E8 00000000 E	    call WriteString
+
+ 00000F58  E8 FFFFFAA4		    call DrawInventory
+ 00000F5D  C3			    ret
+ 00000F5E			DrawDoorScene ENDP
+
+ 00000F5E			HandleKeyInput PROC
+ 00000F5E  60			    pushad
+				    
+				    ; Check if dialogue is active
+ 00000F5F  80 3D 000011DA R	    cmp isDialogueActive, 1
+	   01
+ 00000F66  75 1C		    jne RegularInput
+				    
+				    ; Handle space key for dialogue
+ 00000F68  3C 20		    cmp al, 20h
+ 00000F6A  75 38		    jne NoInput
+				    
+ 00000F6C  C6 05 000011DA R	    mov isDialogueActive, 0
+	   00
+ 00000F73  E8 FFFFF4C5		    call ClearDialogueArea
+ 00000F78  E8 FFFFFA84		    call DrawInventory
+ 00000F7D  E8 FFFFF2B6		    call DrawPlayer
+ 00000F82  EB 20		    jmp NoInput
+				    
+ 00000F84			RegularInput:
+				    ; Check for special keys
+ 00000F84  3C 1B		    cmp al, 1Bh        ; ESC key
+ 00000F86  74 10		    je HandleEscKey
+				    
+ 00000F88  3C 6D		    cmp al, 'm'        ; Music toggle
+ 00000F8A  74 13		    je HandleMuteKey
+				    
+				    ; Handle movement
+ 00000F8C  E8 00000015		    call HandlePlayerMovement
+				    
+				    ; Check for interactions
+ 00000F91  E8 FFFFFC3C		    call CheckInteractions
+ 00000F96  EB 0C		    jmp NoInput
+				    
+ 00000F98			HandleEscKey:
+ 00000F98  E8 FFFFF4CA		    call HandlePauseMenu
+ 00000F9D  EB 05		    jmp NoInput
+				    
+ 00000F9F			HandleMuteKey:
+ 00000F9F  E8 FFFFF55E		    call ToggleMusic
+				    
+ 00000FA4			NoInput:
+ 00000FA4  61			    popad
+ 00000FA5  C3			    ret
+ 00000FA6			HandleKeyInput ENDP
+
+ 00000FA6			HandlePlayerMovement PROC 
+ 00000FA6  60			    pushad                      ; Save all registers
+				    
+				    ; Try vertical movement first (W/S keys)
+ 00000FA7  E8 FFFFF587		    call HandleVerticalMovement
+ 00000FAC  3C 01		    cmp al, 1                  ; Check if movement was handled
+ 00000FAE  74 05		    je MovementDone
+				    
+				    ; If not vertical, try horizontal movement (A/D keys)
+ 00000FB0  E8 FFFFF853		    call HandleHorizontalMovement
+				    
+ 00000FB5			MovementDone:
+ 00000FB5  61			    popad                      ; Restore all registers
+ 00000FB6  C3			    ret
+ 00000FB7			HandlePlayerMovement ENDP
+
+				; Program end point
+				END main
+Microsoft (R) Macro Assembler Version 14.41.34123.0	    12/02/24 14:43:17
+fproj copy 2.asm					     Symbols 2 - 1
+
+
+
+
+Macros:
+
+                N a m e                 Type
+
+IsDefined  . . . . . . . . . . .	Func
+Startup  . . . . . . . . . . . .	Proc
+mDumpMem . . . . . . . . . . . .	Proc
+mDump  . . . . . . . . . . . . .	Proc
+mGotoxy  . . . . . . . . . . . .	Proc
+mReadString  . . . . . . . . . .	Proc
+mShowRegister  . . . . . . . . .	Proc
+mShow  . . . . . . . . . . . . .	Proc
+mWriteLn . . . . . . . . . . . .	Proc
+mWriteSpace  . . . . . . . . . .	Proc
+mWriteString . . . . . . . . . .	Proc
+mWrite . . . . . . . . . . . . .	Proc
+
+
+Structures and Unions:
+
+                N a m e                  Size
+                                         Offset      Type
+
+CONSOLE_CURSOR_INFO  . . . . . .	 00000008
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  bVisible . . . . . . . . . . .	 00000004	 DWord
+CONSOLE_SCREEN_BUFFER_INFO . . .	 00000016
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  dwCursorPosition . . . . . . .	 00000004	 DWord
+  wAttributes  . . . . . . . . .	 00000008	 Word
+  srWindow . . . . . . . . . . .	 0000000A	 QWord
+  dwMaximumWindowSize  . . . . .	 00000012	 DWord
+COORD  . . . . . . . . . . . . .	 00000004
+  X  . . . . . . . . . . . . . .	 00000000	 Word
+  Y  . . . . . . . . . . . . . .	 00000002	 Word
+FILETIME . . . . . . . . . . . .	 00000008
+  loDateTime . . . . . . . . . .	 00000000	 DWord
+  hiDateTime . . . . . . . . . .	 00000004	 DWord
+FOCUS_EVENT_RECORD . . . . . . .	 00000004
+  bSetFocus  . . . . . . . . . .	 00000000	 DWord
+FPU_ENVIRON  . . . . . . . . . .	 0000001C
+  controlWord  . . . . . . . . .	 00000000	 Word
+  statusWord . . . . . . . . . .	 00000004	 Word
+  tagWord  . . . . . . . . . . .	 00000008	 Word
+  instrPointerOffset . . . . . .	 0000000C	 DWord
+  instrPointerSelector . . . . .	 00000010	 DWord
+  operandPointerOffset . . . . .	 00000014	 DWord
+  operandPointerSelector . . . .	 00000018	 Word
+INPUT_RECORD . . . . . . . . . .	 00000014
+  EventType  . . . . . . . . . .	 00000000	 Word
+  Event  . . . . . . . . . . . .	 00000004	 XmmWord
+  bKeyDown . . . . . . . . . . .	 00000000	 DWord
+  wRepeatCount . . . . . . . . .	 00000004	 Word
+  wVirtualKeyCode  . . . . . . .	 00000006	 Word
+  wVirtualScanCode . . . . . . .	 00000008	 Word
+  uChar  . . . . . . . . . . . .	 0000000A	 Word
+  UnicodeChar  . . . . . . . . .	 00000000	 Word
+  AsciiChar  . . . . . . . . . .	 00000000	 Byte
+  dwControlKeyState  . . . . . .	 0000000C	 DWord
+  dwMousePosition  . . . . . . .	 00000000	 DWord
+  dwButtonState  . . . . . . . .	 00000004	 DWord
+  dwMouseControlKeyState . . . .	 00000008	 DWord
+  dwEventFlags . . . . . . . . .	 0000000C	 DWord
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  dwCommandId  . . . . . . . . .	 00000000	 DWord
+  bSetFocus  . . . . . . . . . .	 00000000	 DWord
+KEY_EVENT_RECORD . . . . . . . .	 00000010
+  bKeyDown . . . . . . . . . . .	 00000000	 DWord
+  wRepeatCount . . . . . . . . .	 00000004	 Word
+  wVirtualKeyCode  . . . . . . .	 00000006	 Word
+  wVirtualScanCode . . . . . . .	 00000008	 Word
+  uChar  . . . . . . . . . . . .	 0000000A	 Word
+  UnicodeChar  . . . . . . . . .	 00000000	 Word
+  AsciiChar  . . . . . . . . . .	 00000000	 Byte
+  dwControlKeyState  . . . . . .	 0000000C	 DWord
+MENU_EVENT_RECORD  . . . . . . .	 00000004
+  dwCommandId  . . . . . . . . .	 00000000	 DWord
+MOUSE_EVENT_RECORD . . . . . . .	 00000010
+  dwMousePosition  . . . . . . .	 00000000	 DWord
+  dwButtonState  . . . . . . . .	 00000004	 DWord
+  dwMouseControlKeyState . . . .	 00000008	 DWord
+  dwEventFlags . . . . . . . . .	 0000000C	 DWord
+SMALL_RECT . . . . . . . . . . .	 00000008
+  Left . . . . . . . . . . . . .	 00000000	 Word
+  Top  . . . . . . . . . . . . .	 00000002	 Word
+  Right  . . . . . . . . . . . .	 00000004	 Word
+  Bottom . . . . . . . . . . . .	 00000006	 Word
+SYSTEMTIME . . . . . . . . . . .	 00000010
+  wYear  . . . . . . . . . . . .	 00000000	 Word
+  wMonth . . . . . . . . . . . .	 00000002	 Word
+  wDayOfWeek . . . . . . . . . .	 00000004	 Word
+  wDay . . . . . . . . . . . . .	 00000006	 Word
+  wHour  . . . . . . . . . . . .	 00000008	 Word
+  wMinute  . . . . . . . . . . .	 0000000A	 Word
+  wSecond  . . . . . . . . . . .	 0000000C	 Word
+  wMilliseconds  . . . . . . . .	 0000000E	 Word
+WINDOW_BUFFER_SIZE_RECORD  . . .	 00000004
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+FLAT . . . . . . . . . . . . . .	GROUP
+STACK  . . . . . . . . . . . . .	32 Bit	 00001000 DWord	  Stack	  'STACK'	 
+_DATA  . . . . . . . . . . . . .	32 Bit	 00001669 DWord	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 00000FB7 DWord	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+CheckBothItems . . . . . . . . .	P Near	 00000AC4 _TEXT	Length= 00000021 Public STDCALL
+  DoNotHaveItems . . . . . . . .	L Near	 00000ADE _TEXT	
+CheckInteractions  . . . . . . .	P Near	 00000BD2 _TEXT	Length= 000000F2 Public STDCALL
+  CheckSpearInteraction  . . . .	L Near	 00000BEF _TEXT	
+  SpearAlreadyCollected  . . . .	L Near	 00000C27 _TEXT	
+  CheckBookInteraction . . . . .	L Near	 00000C31 _TEXT	
+  BookAlreadyCollected . . . . .	L Near	 00000C5E _TEXT	
+  CheckAltarInteraction  . . . .	L Near	 00000C65 _TEXT	
+  ShowRegularAltar . . . . . . .	L Near	 00000CAC _TEXT	
+  ShowInteractionDialogue  . . .	L Near	 00000CB8 _TEXT	
+  ExitInteractions . . . . . . .	L Near	 00000CC2 _TEXT	
+ClearDialogueArea  . . . . . . .	P Near	 0000043D _TEXT	Length= 0000002A Public STDCALL
+  ClearLoop  . . . . . . . . . .	L Near	 00000445 _TEXT	
+  ClearLine  . . . . . . . . . .	L Near	 00000454 _TEXT	
+CloseFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CloseHandle  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Clrscr . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CreateFileA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CreateOutputFile . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Crlf . . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Delay  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+DrawDoorScene  . . . . . . . . .	P Near	 00000E28 _TEXT	Length= 00000136 Public STDCALL
+DrawInventory  . . . . . . . . .	P Near	 00000A01 _TEXT	Length= 000000C3 Public STDCALL
+  DrawTopBorder  . . . . . . . .	L Near	 00000A2C _TEXT	
+  DrawSides  . . . . . . . . . .	L Near	 00000A3F _TEXT	
+  DrawBottomBorder . . . . . . .	L Near	 00000A7C _TEXT	
+  CheckBook  . . . . . . . . . .	L Near	 00000AA6 _TEXT	
+  FinishInventory  . . . . . . .	L Near	 00000AC2 _TEXT	
+DrawLeftScene  . . . . . . . . .	P Near	 00000307 _TEXT	Length= 00000136 Public STDCALL
+DrawMenu . . . . . . . . . . . .	P Near	 0000011D _TEXT	Length= 000000AC Public STDCALL
+DrawMusicStatus  . . . . . . . .	P Near	 00000B99 _TEXT	Length= 00000039 Public STDCALL
+  ShowMutedStatus  . . . . . . .	L Near	 00000BC6 _TEXT	
+  DisplayMuteStatus  . . . . . .	L Near	 00000BCB _TEXT	
+DrawPlayer . . . . . . . . . . .	P Near	 00000238 _TEXT	Length= 0000001B Public STDCALL
+DrawTempleScene  . . . . . . . .	P Near	 00000CF2 _TEXT	Length= 00000136 Public STDCALL
+DrawWinScreen  . . . . . . . . .	P Near	 00000B4A _TEXT	Length= 0000004F Public STDCALL
+DumpMem  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+DumpRegs . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+EnterInstructionsState . . . . .	P Near	 00000110 _TEXT	Length= 0000000D Public STDCALL
+ExitGameProcedure  . . . . . . .	P Near	 000000CD _TEXT	Length= 00000026 Public STDCALL
+ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FileTimeToDosDateTime  . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FileTimeToSystemTime . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FlushConsoleInputBuffer  . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FormatMessageA . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetCommandLineA  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetCommandTail . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleCP . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleCursorInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleScreenBufferInfo . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetDateTime  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetFileTime  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetKeyState  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLastError . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLocalTime . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetMaxXY . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetMseconds  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetNumberOfConsoleInputEvents  .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetProcessHeap . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetSystemTime  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetTextColor . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetTickCount . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Gotoxy . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HandleHorizontalMovement . . . .	P Near	 00000808 _TEXT	Length= 000001F9 Public STDCALL
+  ProcessLeft  . . . . . . . . .	L Near	 00000815 _TEXT	
+  ToLeftRoom . . . . . . . . . .	L Near	 0000084A _TEXT	
+  ToCenterFromRight  . . . . . .	L Near	 0000086A _TEXT	
+  ContinueLeft . . . . . . . . .	L Near	 0000088A _TEXT	
+  CheckTempleLeft  . . . . . . .	L Near	 00000896 _TEXT	
+  CheckLeftSceneLeft . . . . . .	L Near	 000008B7 _TEXT	
+  CheckLibraryCollisionLeft  . .	L Near	 000008C9 _TEXT	
+  ShowLeftLibrary  . . . . . . .	L Near	 000008DD _TEXT	
+  ShowRightLibrary . . . . . . .	L Near	 000008F1 _TEXT	
+  CheckPaintingCollisionLeft . .	L Near	 000008FE _TEXT	
+  DoMoveLeft . . . . . . . . . .	L Near	 00000918 _TEXT	
+  ProcessRight . . . . . . . . .	L Near	 0000093B _TEXT	
+  ToCenterFromLeft . . . . . . .	L Near	 00000970 _TEXT	
+  ToRightRoom  . . . . . . . . .	L Near	 00000990 _TEXT	
+  ContinueRight  . . . . . . . .	L Near	 000009B0 _TEXT	
+  CheckTempleRight . . . . . . .	L Near	 000009B9 _TEXT	
+  DoMoveRight  . . . . . . . . .	L Near	 000009DE _TEXT	
+HandleKeyInput . . . . . . . . .	P Near	 00000F5E _TEXT	Length= 00000048 Public STDCALL
+  RegularInput . . . . . . . . .	L Near	 00000F84 _TEXT	
+  HandleEscKey . . . . . . . . .	L Near	 00000F98 _TEXT	
+  HandleMuteKey  . . . . . . . .	L Near	 00000F9F _TEXT	
+  NoInput  . . . . . . . . . . .	L Near	 00000FA4 _TEXT	
+HandlePauseMenu  . . . . . . . .	P Near	 00000467 _TEXT	Length= 0000009B Public STDCALL
+  WaitForPauseInput  . . . . . .	L Near	 000004B8 _TEXT	
+  ContinueGame . . . . . . . . .	L Near	 000004C7 _TEXT	
+  DrawScene1 . . . . . . . . . .	L Near	 000004E5 _TEXT	
+  DrawScene2 . . . . . . . . . .	L Near	 000004EC _TEXT	
+  ContinueDone . . . . . . . . .	L Near	 000004F1 _TEXT	
+  ExitToMenu . . . . . . . . . .	L Near	 000004FC _TEXT	
+HandlePlayerMovement . . . . . .	P Near	 00000FA6 _TEXT	Length= 00000011 Public STDCALL
+  MovementDone . . . . . . . . .	L Near	 00000FB5 _TEXT	
+HandleVerticalMovement . . . . .	P Near	 00000533 _TEXT	Length= 000002D5 Public STDCALL
+  MoveUp . . . . . . . . . . . .	L Near	 00000540 _TEXT	
+  CheckTempleUp  . . . . . . . .	L Near	 00000562 _TEXT	
+  CheckEyePos  . . . . . . . . .	L Near	 00000593 _TEXT	
+  CheckAltarUp . . . . . . . . .	L Near	 000005BD _TEXT	
+  WaitForSpaceKey  . . . . . . .	L Near	 000005FA _TEXT	
+  ShowRegularAltarDialog . . . .	L Near	 00000610 _TEXT	
+  CheckLeftSceneUp . . . . . . .	L Near	 0000061D _TEXT	
+  CheckRightLibrary  . . . . . .	L Near	 00000652 _TEXT	
+  CheckDoorUp  . . . . . . . . .	L Near	 00000669 _TEXT	
+  CheckSpearsUp  . . . . . . . .	L Near	 00000693 _TEXT	
+  DoMoveUp . . . . . . . . . . .	L Near	 000006B7 _TEXT	
+  MoveDown . . . . . . . . . . .	L Near	 000006DA _TEXT	
+  CheckTempleDown  . . . . . . .	L Near	 000006F8 _TEXT	
+  CheckAltarDown . . . . . . . .	L Near	 00000729 _TEXT	
+  CheckLeftSceneDown . . . . . .	L Near	 00000729 _TEXT	
+  CheckRightLibraryDown  . . . .	L Near	 0000075A _TEXT	
+  CheckCenterPaintingDown  . . .	L Near	 00000775 _TEXT	
+  CheckDoorDown  . . . . . . . .	L Near	 00000797 _TEXT	
+  CheckSpearsDown  . . . . . . .	L Near	 000007C1 _TEXT	
+  DoMoveDown . . . . . . . . . .	L Near	 000007E5 _TEXT	
+HaveBothItems  . . . . . . . . .	P Near	 00000CC4 _TEXT	Length= 0000002E Public STDCALL
+HeapAlloc  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapCreate . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapDestroy  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapFree . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapSize . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+InitializeGameState  . . . . . .	P Near	 00000088 _TEXT	Length= 0000001F Public STDCALL
+InitializeNewGame  . . . . . . .	P Near	 000000F9 _TEXT	Length= 00000017 Public STDCALL
+IsDigit  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+LocalFree  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MessageBoxA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MsgBoxAsk  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MsgBox . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+OpenInputFile  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ParseDecimal32 . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ParseInteger32 . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+PeekConsoleInputA  . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+PlaySoundA . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ProcessGameState . . . . . . . .	P Near	 000001C9 _TEXT	Length= 0000006F Public STDCALL
+  DrawTempleRoom . . . . . . . .	L Near	 000001EB _TEXT	
+  DrawLeftRoom . . . . . . . . .	L Near	 000001F2 _TEXT	
+  DrawDoorRoom . . . . . . . . .	L Near	 000001F9 _TEXT	
+  ContinueGameState  . . . . . .	L Near	 00000200 _TEXT	
+  GameStateLoop  . . . . . . . .	L Near	 0000020A _TEXT	
+  HandlePause  . . . . . . . . .	L Near	 0000021C _TEXT	
+ProcessInstructionsState . . . .	P Near	 000000F3 _TEXT	Length= 00000006 Public STDCALL
+ProcessMenuState . . . . . . . .	P Near	 000000A7 _TEXT	Length= 00000026 Public STDCALL
+  ToggleMusicInMenu  . . . . . .	L Near	 000000C2 _TEXT	
+Random32 . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+RandomRange  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Randomize  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadChar . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadConsoleA . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadConsoleInputA  . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadDec  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFloat  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFromFile . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadHex  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadInt  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadKeyFlush . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadKey  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadString . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleCursorInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleCursorPosition . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleScreenBufferSize . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleTextAttribute  . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleTitleA . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleWindowInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetFilePointer . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetLocalTime . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetTextColor . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ShowDialogue . . . . . . . . . .	P Near	 00000AE5 _TEXT	Length= 00000065 Public STDCALL
+  BorderTop  . . . . . . . . . .	L Near	 00000B01 _TEXT	
+  BorderBottom . . . . . . . . .	L Near	 00000B27 _TEXT	
+ShowFPUStack . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ShowInstructions . . . . . . . .	P Near	 0000026E _TEXT	Length= 00000099 Public STDCALL
+  WaitForInstructionInput  . . .	L Near	 000002F1 _TEXT	
+Sleep  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+StrLength  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_compare  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_copy . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_length . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_trim . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_ucase  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SystemTimeToFileTime . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ToggleMusic  . . . . . . . . . .	P Near	 00000502 _TEXT	Length= 00000031 Public STDCALL
+  MuteBackgroundMusic  . . . . .	L Near	 00000526 _TEXT	
+  ToggleMusicEnd . . . . . . . .	L Near	 00000531 _TEXT	
+UpdatePlayer . . . . . . . . . .	P Near	 00000253 _TEXT	Length= 0000001B Public STDCALL
+WaitMsg  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteBinB  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteBin . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteChar  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleA  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleOutputAttribute  . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleOutputCharacterA . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteDec . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFloat . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteHexB  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteHex . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteInt . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteStackFrameName  . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteStackFrame  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteString  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteToFile  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteWindowsMsg  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+main . . . . . . . . . . . . . .	P Near	 00000000 _TEXT	Length= 00000088 Public STDCALL
+  GameLoop . . . . . . . . . . .	L Near	 00000016 _TEXT	
+  ClearStatus  . . . . . . . . .	L Near	 00000039 _TEXT	
+  showMuted  . . . . . . . . . .	L Near	 00000059 _TEXT	
+  displayMuteStatus  . . . . . .	L Near	 0000005E _TEXT	
+  DoProcessMenu  . . . . . . . .	L Near	 0000007A _TEXT	
+  DoProcessInstructions  . . . .	L Near	 00000081 _TEXT	
+printf . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+scanf  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+wsprintfA  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+??0000 . . . . . . . . . . . . .	Byte	 00001510 _DATA	
+??0001 . . . . . . . . . . . . .	Byte	 0000153B _DATA	
+??0002 . . . . . . . . . . . . .	Byte	 00001547 _DATA	
+??0003 . . . . . . . . . . . . .	Byte	 0000156E _DATA	
+??0004 . . . . . . . . . . . . .	Byte	 0000158D _DATA	
+??0005 . . . . . . . . . . . . .	Byte	 000015A7 _DATA	
+??0006 . . . . . . . . . . . . .	Byte	 000015D5 _DATA	
+??0007 . . . . . . . . . . . . .	Byte	 000015F3 _DATA	
+??0008 . . . . . . . . . . . . .	Byte	 0000161B _DATA	
+??0009 . . . . . . . . . . . . .	Byte	 00001650 _DATA	
+@CodeSize  . . . . . . . . . . .	Number	 00000000h   
+@DataSize  . . . . . . . . . . .	Number	 00000000h   
+@Interface . . . . . . . . . . .	Number	 00000003h   
+@Model . . . . . . . . . . . . .	Number	 00000007h   
+@code  . . . . . . . . . . . . .	Text   	 _TEXT
+@data  . . . . . . . . . . . . .	Text   	 FLAT
+@fardata?  . . . . . . . . . . .	Text   	 FLAT
+@fardata . . . . . . . . . . . .	Text   	 FLAT
+@stack . . . . . . . . . . . . .	Text   	 FLAT
+ALTAR_BOTTOM . . . . . . . . . .	Number	 00000009h   
+ALTAR_INTERACT_DIST  . . . . . .	Number	 00000001h   
+ALTAR_INTERACT_TOP . . . . . . .	Number	 00000008h   
+ALTAR_LEFT . . . . . . . . . . .	Number	 00000037h   
+ALTAR_RIGHT  . . . . . . . . . .	Number	 00000041h   
+ALTAR_TOP  . . . . . . . . . . .	Number	 00000008h   
+ALT_MASK . . . . . . . . . . . .	Number	 00000003h   
+BORDER_BOTTOM  . . . . . . . . .	Number	 0000000Eh   
+BORDER_LEFT  . . . . . . . . . .	Number	 00000007h   
+BORDER_RIGHT . . . . . . . . . .	Number	 0000004Eh   
+BORDER_TOP . . . . . . . . . . .	Number	 00000009h   
+CAPSLOCK_ON  . . . . . . . . . .	Number	 00000080h   
+CENTER_PAINTING_LEFT_X . . . . .	Number	 0000001Eh   
+CENTER_PAINTING_RIGHT_X  . . . .	Number	 00000038h   
+CENTER_PAINTING_Y  . . . . . . .	Number	 00000008h   
+CREATE_ALWAYS  . . . . . . . . .	Number	 00000002h   
+CREATE_NEW . . . . . . . . . . .	Number	 00000001h   
+CTRL_MASK  . . . . . . . . . . .	Number	 0000000Ch   
+CreateFile . . . . . . . . . . .	Text   	 CreateFileA
+DOOR_PAINTING_LEFT_X . . . . . .	Number	 00000023h   
+DOOR_PAINTING_LEFT . . . . . . .	Number	 0000000Bh   
+DOOR_PAINTING_RIGHT_X  . . . . .	Number	 0000002Dh   
+DOOR_PAINTING_RIGHT  . . . . . .	Number	 00000030h   
+DOOR_PAINTING_Y  . . . . . . . .	Number	 00000008h   
+DOOR_X . . . . . . . . . . . . .	Number	 00000017h   
+DOOR_Y . . . . . . . . . . . . .	Number	 0000000Bh   
+DO_NOT_SHARE . . . . . . . . . .	Number	 00000000h   
+ENABLE_ECHO_INPUT  . . . . . . .	Number	 00000004h   
+ENABLE_LINE_INPUT  . . . . . . .	Number	 00000002h   
+ENABLE_MOUSE_INPUT . . . . . . .	Number	 00000010h   
+ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
+ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
+ENABLE_WINDOW_INPUT  . . . . . .	Number	 00000008h   
+ENABLE_WRAP_AT_EOL_OUTPUT  . . .	Number	 00000002h   
+ENHANCED_KEY . . . . . . . . . .	Number	 00000100h   
+EYE_INTERACT_TOP . . . . . . . .	Number	 00000008h   
+EYE_LEFT . . . . . . . . . . . .	Number	 00000013h   
+EYE_RIGHT  . . . . . . . . . . .	Number	 00000021h   
+EYE_Y  . . . . . . . . . . . . .	Number	 00000008h   
+FALSE  . . . . . . . . . . . . .	Number	 00000000h   
+FILE_APPEND_DATA . . . . . . . .	Number	 00000004h   
+FILE_ATTRIBUTE_ARCHIVE . . . . .	Number	 00000020h   
+FILE_ATTRIBUTE_COMPRESSED  . . .	Number	 00000800h   
+FILE_ATTRIBUTE_DEVICE  . . . . .	Number	 00000040h   
+FILE_ATTRIBUTE_DIRECTORY . . . .	Number	 00000010h   
+FILE_ATTRIBUTE_ENCRYPTED . . . .	Number	 00004000h   
+FILE_ATTRIBUTE_HIDDEN  . . . . .	Number	 00000002h   
+FILE_ATTRIBUTE_NORMAL  . . . . .	Number	 00000080h   
+FILE_ATTRIBUTE_NOT_CONTENT_INDEXED .	Number	 00002000h   
+FILE_ATTRIBUTE_OFFLINE . . . . .	Number	 00001000h   
+FILE_ATTRIBUTE_READONLY  . . . .	Number	 00000001h   
+FILE_ATTRIBUTE_REPARSE_POINT . .	Number	 00000400h   
+FILE_ATTRIBUTE_SPARSE_FILE . . .	Number	 00000200h   
+FILE_ATTRIBUTE_SYSTEM  . . . . .	Number	 00000004h   
+FILE_ATTRIBUTE_TEMPORARY . . . .	Number	 00000100h   
+FILE_BEGIN . . . . . . . . . . .	Number	 00000000h   
+FILE_CURRENT . . . . . . . . . .	Number	 00000001h   
+FILE_DELETE_CHILD  . . . . . . .	Number	 00000040h   
+FILE_END . . . . . . . . . . . .	Number	 00000002h   
+FILE_READ_DATA . . . . . . . . .	Number	 00000001h   
+FILE_SHARE_DELETE  . . . . . . .	Number	 00000004h   
+FILE_SHARE_READ  . . . . . . . .	Number	 00000001h   
+FILE_SHARE_WRITE . . . . . . . .	Number	 00000002h   
+FILE_WRITE_DATA  . . . . . . . .	Number	 00000002h   
+FOCUS_EVENT  . . . . . . . . . .	Number	 00000010h   
+FORMAT_MESSAGE_ALLOCATE_BUFFER .	Number	 00000100h   
+FORMAT_MESSAGE_FROM_SYSTEM . . .	Number	 00001000h   
+FormatMessage  . . . . . . . . .	Text   	 FormatMessageA
+GENERIC_ALL  . . . . . . . . . .	Number	 10000000h   
+GENERIC_EXECUTE  . . . . . . . .	Number	 20000000h   
+GENERIC_READ . . . . . . . . . .	Number	 -80000000h   
+GENERIC_WRITE  . . . . . . . . .	Number	 40000000h   
+GetCommandLine . . . . . . . . .	Text   	 GetCommandLineA
+HANDLE . . . . . . . . . . . . .	Text   	 DWORD
+HEAP_GENERATE_EXCEPTIONS . . . .	Number	 00000004h   
+HEAP_GROWABLE  . . . . . . . . .	Number	 00000002h   
+HEAP_NO_SERIALIZE  . . . . . . .	Number	 00000001h   
+HEAP_REALLOC_IN_PLACE_ONLY . . .	Number	 00000010h   
+HEAP_ZERO_MEMORY . . . . . . . .	Number	 00000008h   
+IDABORT  . . . . . . . . . . . .	Number	 00000003h   
+IDCANCEL . . . . . . . . . . . .	Number	 00000002h   
+IDCLOSE  . . . . . . . . . . . .	Number	 00000008h   
+IDCONTINUE . . . . . . . . . . .	Number	 0000000Bh   
+IDHELP . . . . . . . . . . . . .	Number	 00000009h   
+IDIGNORE . . . . . . . . . . . .	Number	 00000005h   
+IDNO . . . . . . . . . . . . . .	Number	 00000007h   
+IDOK . . . . . . . . . . . . . .	Number	 00000001h   
+IDRETRY  . . . . . . . . . . . .	Number	 00000004h   
+IDTIMEOUT  . . . . . . . . . . .	Number	 00007D00h   
+IDTRYAGAIN . . . . . . . . . . .	Number	 0000000Ah   
+IDYES  . . . . . . . . . . . . .	Number	 00000006h   
+INVALID_HANDLE_VALUE . . . . . .	Number	 -00000001h   
+KBDOWN_FLAG  . . . . . . . . . .	Number	 00000001h   
+KEY_EVENT  . . . . . . . . . . .	Number	 00000001h   
+KEY_MASKS  . . . . . . . . . . .	Number	 0000001Fh   
+LEFT_ALT_PRESSED . . . . . . . .	Number	 00000002h   
+LEFT_CTRL_PRESSED  . . . . . . .	Number	 00000008h   
+LEFT_LIBRARY_LEFT_X  . . . . . .	Number	 0000000Dh   
+LEFT_LIBRARY_RIGHT_X . . . . . .	Number	 0000001Ch   
+LEFT_SPAWN_X . . . . . . . . . .	Number	 00000046h   
+LIBRARY_INTERACT_Y . . . . . . .	Number	 00000008h   
+MB_ABORTRETRYIGNORE  . . . . . .	Number	 00000002h   
+MB_APPLMODAL . . . . . . . . . .	Number	 00000000h   
+MB_CANCELTRYCONTINUE . . . . . .	Number	 00000006h   
+MB_DEFBUTTON1  . . . . . . . . .	Number	 00000000h   
+MB_DEFBUTTON2  . . . . . . . . .	Number	 00000100h   
+MB_DEFBUTTON3  . . . . . . . . .	Number	 00000200h   
+MB_DEFBUTTON4  . . . . . . . . .	Number	 00000300h   
+MB_HELP  . . . . . . . . . . . .	Number	 00004000h   
+MB_ICONASTERISK  . . . . . . . .	Number	 00000040h   
+MB_ICONERROR . . . . . . . . . .	Number	 00000010h   
+MB_ICONEXCLAMATION . . . . . . .	Number	 00000030h   
+MB_ICONHAND  . . . . . . . . . .	Number	 00000010h   
+MB_ICONINFORMATION . . . . . . .	Number	 00000040h   
+MB_ICONQUESTION  . . . . . . . .	Number	 00000020h   
+MB_ICONSTOP  . . . . . . . . . .	Number	 00000010h   
+MB_ICONWARNING . . . . . . . . .	Number	 00000030h   
+MB_OKCANCEL  . . . . . . . . . .	Number	 00000001h   
+MB_OK  . . . . . . . . . . . . .	Number	 00000000h   
+MB_RETRYCANCEL . . . . . . . . .	Number	 00000005h   
+MB_SYSTEMMODAL . . . . . . . . .	Number	 00001000h   
+MB_TASKMODAL . . . . . . . . . .	Number	 00002000h   
+MB_USERICON  . . . . . . . . . .	Number	 00000080h   
+MB_YESNOCANCEL . . . . . . . . .	Number	 00000003h   
+MB_YESNO . . . . . . . . . . . .	Number	 00000004h   
+MENU_EVENT . . . . . . . . . . .	Number	 00000008h   
+MOUSE_EVENT  . . . . . . . . . .	Number	 00000002h   
+MessageBox . . . . . . . . . . .	Text   	 MessageBoxA
+NULL . . . . . . . . . . . . . .	Number	 00000000h   
+NUMLOCK_ON . . . . . . . . . . .	Number	 00000020h   
+OPEN_ALWAYS  . . . . . . . . . .	Number	 00000004h   
+OPEN_EXISTING  . . . . . . . . .	Number	 00000003h   
+PeekConsoleInput . . . . . . . .	Text   	 PeekConsoleInputA
+RIGHT_ALT_PRESSED  . . . . . . .	Number	 00000001h   
+RIGHT_CTRL_PRESSED . . . . . . .	Number	 00000004h   
+RIGHT_LIBRARY_LEFT_X . . . . . .	Number	 0000003Ah   
+RIGHT_LIBRARY_RIGHT_X  . . . . .	Number	 00000049h   
+RIGHT_SPAWN_X  . . . . . . . . .	Number	 0000000Fh   
+ReadConsoleInput . . . . . . . .	Text   	 ReadConsoleInputA
+ReadConsole  . . . . . . . . . .	Text   	 ReadConsoleA
+SCROLLLOCK_ON  . . . . . . . . .	Number	 00000040h   
+SHIFT_MASK . . . . . . . . . . .	Number	 00000010h   
+SHIFT_PRESSED  . . . . . . . . .	Number	 00000010h   
+SND_ASYNC  . . . . . . . . . . .	Number	 00000001h   
+SND_FILENAME . . . . . . . . . .	Number	 00020000h   
+SND_LOOP . . . . . . . . . . . .	Number	 00000008h   
+SPAWN_Y  . . . . . . . . . . . .	Number	 0000000Ch   
+SPEAR_INTERACT_Y . . . . . . . .	Number	 00000008h   
+SPEAR_LEFT . . . . . . . . . . .	Number	 00000034h   
+SPEAR_RIGHT  . . . . . . . . . .	Number	 00000043h   
+SPEAR_Y  . . . . . . . . . . . .	Number	 00000008h   
+STD_ERROR_HANDLE . . . . . . . .	Number	 -0000000Ch   
+STD_INPUT_HANDLE . . . . . . . .	Number	 -0000000Ah   
+STD_OUTPUT_HANDLE  . . . . . . .	Number	 -0000000Bh   
+SetConsoleTitle  . . . . . . . .	Text   	 SetConsoleTitleA
+TAB  . . . . . . . . . . . . . .	Number	 00000009h   
+TRANSITION_Y_MAX . . . . . . . .	Number	 0000000Eh   
+TRANSITION_Y_MIN . . . . . . . .	Number	 0000000Ch   
+TRUE . . . . . . . . . . . . . .	Number	 00000001h   
+TRUNCATE_EXISTING  . . . . . . .	Number	 00000005h   
+VK_11  . . . . . . . . . . . . .	Number	 000000BDh   
+VK_12  . . . . . . . . . . . . .	Number	 000000BBh   
+VK_ADD . . . . . . . . . . . . .	Number	 0000006Bh   
+VK_BACK  . . . . . . . . . . . .	Number	 00000008h   
+VK_CANCEL  . . . . . . . . . . .	Number	 00000003h   
+VK_CAPITAL . . . . . . . . . . .	Number	 00000014h   
+VK_CLEAR . . . . . . . . . . . .	Number	 0000000Ch   
+VK_CONTROL . . . . . . . . . . .	Number	 00000011h   
+VK_DECIMAL . . . . . . . . . . .	Number	 0000006Eh   
+VK_DELETE  . . . . . . . . . . .	Number	 0000002Eh   
+VK_DIVIDE  . . . . . . . . . . .	Number	 0000006Fh   
+VK_DOWN  . . . . . . . . . . . .	Number	 00000028h   
+VK_END . . . . . . . . . . . . .	Number	 00000023h   
+VK_ESCAPE  . . . . . . . . . . .	Number	 0000001Bh   
+VK_EXECUTE . . . . . . . . . . .	Number	 0000002Bh   
+VK_F10 . . . . . . . . . . . . .	Number	 00000079h   
+VK_F11 . . . . . . . . . . . . .	Number	 0000007Ah   
+VK_F12 . . . . . . . . . . . . .	Number	 0000007Bh   
+VK_F13 . . . . . . . . . . . . .	Number	 0000007Ch   
+VK_F14 . . . . . . . . . . . . .	Number	 0000007Dh   
+VK_F15 . . . . . . . . . . . . .	Number	 0000007Eh   
+VK_F16 . . . . . . . . . . . . .	Number	 0000007Fh   
+VK_F17 . . . . . . . . . . . . .	Number	 00000080h   
+VK_F18 . . . . . . . . . . . . .	Number	 00000081h   
+VK_F19 . . . . . . . . . . . . .	Number	 00000082h   
+VK_F1  . . . . . . . . . . . . .	Number	 00000070h   
+VK_F20 . . . . . . . . . . . . .	Number	 00000083h   
+VK_F21 . . . . . . . . . . . . .	Number	 00000084h   
+VK_F22 . . . . . . . . . . . . .	Number	 00000085h   
+VK_F23 . . . . . . . . . . . . .	Number	 00000086h   
+VK_F24 . . . . . . . . . . . . .	Number	 00000087h   
+VK_F2  . . . . . . . . . . . . .	Number	 00000071h   
+VK_F3  . . . . . . . . . . . . .	Number	 00000072h   
+VK_F4  . . . . . . . . . . . . .	Number	 00000073h   
+VK_F5  . . . . . . . . . . . . .	Number	 00000074h   
+VK_F6  . . . . . . . . . . . . .	Number	 00000075h   
+VK_F7  . . . . . . . . . . . . .	Number	 00000076h   
+VK_F8  . . . . . . . . . . . . .	Number	 00000077h   
+VK_F9  . . . . . . . . . . . . .	Number	 00000078h   
+VK_HELP  . . . . . . . . . . . .	Number	 0000002Fh   
+VK_HOME  . . . . . . . . . . . .	Number	 00000024h   
+VK_INSERT  . . . . . . . . . . .	Number	 0000002Dh   
+VK_LBUTTON . . . . . . . . . . .	Number	 00000001h   
+VK_LCONTROL  . . . . . . . . . .	Number	 000000A2h   
+VK_LEFT  . . . . . . . . . . . .	Number	 00000025h   
+VK_LMENU . . . . . . . . . . . .	Number	 000000A4h   
+VK_LSHIFT  . . . . . . . . . . .	Number	 000000A0h   
+VK_MENU  . . . . . . . . . . . .	Number	 00000012h   
+VK_MULTIPLY  . . . . . . . . . .	Number	 0000006Ah   
+VK_NEXT  . . . . . . . . . . . .	Number	 00000022h   
+VK_NUMLOCK . . . . . . . . . . .	Number	 00000090h   
+VK_NUMPAD0 . . . . . . . . . . .	Number	 00000060h   
+VK_NUMPAD1 . . . . . . . . . . .	Number	 00000061h   
+VK_NUMPAD2 . . . . . . . . . . .	Number	 00000062h   
+VK_NUMPAD3 . . . . . . . . . . .	Number	 00000063h   
+VK_NUMPAD4 . . . . . . . . . . .	Number	 00000064h   
+VK_NUMPAD5 . . . . . . . . . . .	Number	 00000065h   
+VK_NUMPAD6 . . . . . . . . . . .	Number	 00000066h   
+VK_NUMPAD7 . . . . . . . . . . .	Number	 00000067h   
+VK_NUMPAD8 . . . . . . . . . . .	Number	 00000068h   
+VK_NUMPAD9 . . . . . . . . . . .	Number	 00000069h   
+VK_PAUSE . . . . . . . . . . . .	Number	 00000013h   
+VK_PRINT . . . . . . . . . . . .	Number	 0000002Ah   
+VK_PRIOR . . . . . . . . . . . .	Number	 00000021h   
+VK_RBUTTON . . . . . . . . . . .	Number	 00000002h   
+VK_RCONTROL  . . . . . . . . . .	Number	 000000A3h   
+VK_RETURN  . . . . . . . . . . .	Number	 0000000Dh   
+VK_RIGHT . . . . . . . . . . . .	Number	 00000027h   
+VK_RMENU . . . . . . . . . . . .	Number	 000000A5h   
+VK_RSHIFT  . . . . . . . . . . .	Number	 000000A1h   
+VK_SCROLL  . . . . . . . . . . .	Number	 00000091h   
+VK_SEPARATER . . . . . . . . . .	Number	 0000006Ch   
+VK_SHIFT . . . . . . . . . . . .	Number	 00000010h   
+VK_SNAPSHOT  . . . . . . . . . .	Number	 0000002Ch   
+VK_SPACE . . . . . . . . . . . .	Number	 00000020h   
+VK_SUBTRACT  . . . . . . . . . .	Number	 0000006Dh   
+VK_TAB . . . . . . . . . . . . .	Number	 00000009h   
+VK_UP  . . . . . . . . . . . . .	Number	 00000026h   
+WINDOW_BUFFER_SIZE_EVENT . . . .	Number	 00000004h   
+WriteConsoleOutputCharacter  . .	Text   	 WriteConsoleOutputCharacterA
+WriteConsole . . . . . . . . . .	Text   	 WriteConsoleA
+altarDialogue  . . . . . . . . .	Byte	 000011E1 _DATA	
+black  . . . . . . . . . . . . .	Number	 00000000h   
+blue . . . . . . . . . . . . . .	Number	 00000001h   
+bookCollectDialogue  . . . . . .	Byte	 000013E4 _DATA	
+bookExaminedDialogue . . . . . .	Byte	 0000143A _DATA	
+bookItem . . . . . . . . . . . .	Byte	 000014EB _DATA	
+borderCorner . . . . . . . . . .	Byte	 00000289 _DATA	
+borderHorizontal . . . . . . . .	Byte	 00000285 _DATA	
+borderVertical . . . . . . . . .	Byte	 00000287 _DATA	
+brown  . . . . . . . . . . . . .	Number	 00000006h   
+centerPaintingDialogue . . . . .	Byte	 00001366 _DATA	
+continuePrompt . . . . . . . . .	Byte	 0000028B _DATA	
+continueText . . . . . . . . . .	Byte	 00000245 _DATA	
+controlsText . . . . . . . . . .	Byte	 000001E1 _DATA	
+currentDialogue  . . . . . . . .	DWord	 000011DB _DATA	
+currentScene . . . . . . . . . .	Byte	 00000045 _DATA	
+cyan . . . . . . . . . . . . . .	Number	 00000003h   
+doorPaintingDialogue . . . . . .	Byte	 000012A8 _DATA	
+exitText . . . . . . . . . . . .	Byte	 00000256 _DATA	
+exit . . . . . . . . . . . . . .	Text   	 INVOKE ExitProcess,0
+eyeDialogue  . . . . . . . . . .	Byte	 00001226 _DATA	
+gameState  . . . . . . . . . . .	Byte	 00000042 _DATA	
+gray . . . . . . . . . . . . . .	Number	 00000008h   
+green  . . . . . . . . . . . . .	Number	 00000002h   
+hasBook  . . . . . . . . . . . .	Byte	 000014D6 _DATA	
+hasSpear . . . . . . . . . . . .	Byte	 000014D5 _DATA	
+inputChar  . . . . . . . . . . .	Byte	 00000044 _DATA	
+inventoryBorderVertical  . . . .	Byte	 0000150E _DATA	
+inventoryHeight  . . . . . . . .	Number	 00000005h   
+inventoryTitle . . . . . . . . .	Byte	 000014D8 _DATA	
+inventoryWidth . . . . . . . . .	Number	 00000019h   
+isDialogueActive . . . . . . . .	Byte	 000011DA _DATA	
+isGameEnded  . . . . . . . . . .	Byte	 000011E0 _DATA	
+isMuted  . . . . . . . . . . . .	Byte	 0000000D _DATA	
+isSpecialDialogue  . . . . . . .	Byte	 000011DF _DATA	
+itemCollectedMsg . . . . . . . .	Byte	 000014FE _DATA	
+lastTransition . . . . . . . . .	Byte	 000011D9 _DATA	
+leftLibraryDialogue  . . . . . .	Byte	 000012F7 _DATA	
+lightBlue  . . . . . . . . . . .	Number	 00000009h   
+lightCyan  . . . . . . . . . . .	Number	 0000000Bh   
+lightGray  . . . . . . . . . . .	Number	 00000007h   
+lightGreen . . . . . . . . . . .	Number	 0000000Ah   
+lightMagenta . . . . . . . . . .	Number	 0000000Dh   
+lightRed . . . . . . . . . . . .	Number	 0000000Ch   
+magenta  . . . . . . . . . . . .	Number	 00000005h   
+menuOption1  . . . . . . . . . .	Byte	 00000188 _DATA	
+menuOption2  . . . . . . . . . .	Byte	 00000196 _DATA	
+menuOption3  . . . . . . . . . .	Byte	 000001A6 _DATA	
+muteMessage  . . . . . . . . . .	Byte	 0000000E _DATA	
+mutedStatus  . . . . . . . . . .	Byte	 00000026 _DATA	
+optionsTitle . . . . . . . . . .	Byte	 0000021B _DATA	
+pausePrompt  . . . . . . . . . .	Byte	 00000266 _DATA	
+pauseTitle . . . . . . . . . . .	Byte	 00000232 _DATA	
+playerX  . . . . . . . . . . . .	Byte	 00000046 _DATA	
+playerY  . . . . . . . . . . . .	Byte	 00000047 _DATA	
+pressKeyPrompt . . . . . . . . .	Byte	 000001AE _DATA	
+red  . . . . . . . . . . . . . .	Number	 00000004h   
+rightLibraryDialogue . . . . . .	Byte	 00001332 _DATA	
+sceneDoor10  . . . . . . . . . .	Byte	 00000A8F _DATA	
+sceneDoor11  . . . . . . . . . .	Byte	 00000AE0 _DATA	
+sceneDoor12  . . . . . . . . . .	Byte	 00000B31 _DATA	
+sceneDoor13  . . . . . . . . . .	Byte	 00000B82 _DATA	
+sceneDoor14  . . . . . . . . . .	Byte	 00000BD3 _DATA	
+sceneDoor15  . . . . . . . . . .	Byte	 00000C24 _DATA	
+sceneDoor16  . . . . . . . . . .	Byte	 00000C75 _DATA	
+sceneDoor1 . . . . . . . . . . .	Byte	 000007B6 _DATA	
+sceneDoor2 . . . . . . . . . . .	Byte	 00000807 _DATA	
+sceneDoor3 . . . . . . . . . . .	Byte	 00000858 _DATA	
+sceneDoor4 . . . . . . . . . . .	Byte	 000008A9 _DATA	
+sceneDoor5 . . . . . . . . . . .	Byte	 000008FA _DATA	
+sceneDoor6 . . . . . . . . . . .	Byte	 0000094B _DATA	
+sceneDoor7 . . . . . . . . . . .	Byte	 0000099C _DATA	
+sceneDoor8 . . . . . . . . . . .	Byte	 000009ED _DATA	
+sceneDoor9 . . . . . . . . . . .	Byte	 00000A3E _DATA	
+sceneLeft10  . . . . . . . . . .	Byte	 00000F9F _DATA	
+sceneLeft11  . . . . . . . . . .	Byte	 00000FF0 _DATA	
+sceneLeft12  . . . . . . . . . .	Byte	 00001041 _DATA	
+sceneLeft13  . . . . . . . . . .	Byte	 00001093 _DATA	
+sceneLeft14  . . . . . . . . . .	Byte	 000010E6 _DATA	
+sceneLeft15  . . . . . . . . . .	Byte	 00001137 _DATA	
+sceneLeft16  . . . . . . . . . .	Byte	 00001188 _DATA	
+sceneLeft1 . . . . . . . . . . .	Byte	 00000CC6 _DATA	
+sceneLeft2 . . . . . . . . . . .	Byte	 00000D17 _DATA	
+sceneLeft3 . . . . . . . . . . .	Byte	 00000D68 _DATA	
+sceneLeft4 . . . . . . . . . . .	Byte	 00000DB9 _DATA	
+sceneLeft5 . . . . . . . . . . .	Byte	 00000E0A _DATA	
+sceneLeft6 . . . . . . . . . . .	Byte	 00000E5B _DATA	
+sceneLeft7 . . . . . . . . . . .	Byte	 00000EAC _DATA	
+sceneLeft8 . . . . . . . . . . .	Byte	 00000EFD _DATA	
+sceneLeft9 . . . . . . . . . . .	Byte	 00000F4E _DATA	
+sceneTemple10  . . . . . . . . .	Byte	 0000057C _DATA	
+sceneTemple11  . . . . . . . . .	Byte	 000005CD _DATA	
+sceneTemple12  . . . . . . . . .	Byte	 0000061E _DATA	
+sceneTemple13  . . . . . . . . .	Byte	 00000670 _DATA	
+sceneTemple14  . . . . . . . . .	Byte	 000006C3 _DATA	
+sceneTemple15  . . . . . . . . .	Byte	 00000714 _DATA	
+sceneTemple16  . . . . . . . . .	Byte	 00000765 _DATA	
+sceneTemple1 . . . . . . . . . .	Byte	 000002A3 _DATA	
+sceneTemple2 . . . . . . . . . .	Byte	 000002F4 _DATA	
+sceneTemple3 . . . . . . . . . .	Byte	 00000345 _DATA	
+sceneTemple4 . . . . . . . . . .	Byte	 00000396 _DATA	
+sceneTemple5 . . . . . . . . . .	Byte	 000003E7 _DATA	
+sceneTemple6 . . . . . . . . . .	Byte	 00000438 _DATA	
+sceneTemple7 . . . . . . . . . .	Byte	 00000489 _DATA	
+sceneTemple8 . . . . . . . . . .	Byte	 000004DA _DATA	
+sceneTemple9 . . . . . . . . . .	Byte	 0000052B _DATA	
+selectedOption . . . . . . . . .	Byte	 00000043 _DATA	
+soundFile  . . . . . . . . . . .	Byte	 00000000 _DATA	
+spearCollectDialogue . . . . . .	Byte	 000013A0 _DATA	
+spearCollectWaiting  . . . . . .	Byte	 000014D7 _DATA	
+spearDialogue  . . . . . . . . .	Byte	 00001261 _DATA	
+spearExaminedDialogue  . . . . .	Byte	 0000141C _DATA	
+spearItem  . . . . . . . . . . .	Byte	 000014E3 _DATA	
+specialAltarDialogue1  . . . . .	Byte	 00001459 _DATA	
+titleArt1  . . . . . . . . . . .	Byte	 00000048 _DATA	
+titleArt2  . . . . . . . . . . .	Byte	 00000088 _DATA	
+titleArt3  . . . . . . . . . . .	Byte	 000000C8 _DATA	
+titleArt4  . . . . . . . . . . .	Byte	 00000108 _DATA	
+titleArt5  . . . . . . . . . . .	Byte	 00000148 _DATA	
+unmutedStatus  . . . . . . . . .	Byte	 00000033 _DATA	
+white  . . . . . . . . . . . . .	Number	 0000000Fh   
+wsprintf . . . . . . . . . . . .	Text   	 wsprintfA
+yellow . . . . . . . . . . . . .	Number	 0000000Eh   
+
+	   1 Warnings
+	   0 Errors
