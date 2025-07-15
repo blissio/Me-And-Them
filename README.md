@@ -71,7 +71,9 @@ This project taught me how to:
 ## 🚀 Try It Yourself
 
 Clone the repo.
+
 Open the `.asm` file in Visual Studio, build, and run!
+
 Make sure `Irvine32.lib` is correctly linked in your project settings.
 
 ---
@@ -79,6 +81,8 @@ Make sure `Irvine32.lib` is correctly linked in your project settings.
 ## 🤓 About the Developer
 
 Hey! I'm **Rayane EL YASTI**, a Cybersecurity & Data Science double major at Duquesne University. I build tools, write exploits, and automate Linux setups when I'm not drawing temples in ASCII.
+
 Find more of my work here: [GitHub.com/blissio](https://github.com/blissio)
+
 Connect on LinkedIn: [linkedin.com/in/rayaneelyasti](https://www.linkedin.com/in/rayaneelyasti/)
 
