@@ -1,8 +1,7 @@
 # 🛕 ASCII Quest: Me And Them
 
 > An x86 Assembly adventure, where code meets chaos and temples hum with 16-bit spirit.
-
-    __  ___                        __   __  __                 
+     __  ___                        __   __  __                 
    /  |/  /__     ____ _____  ____/ /  / /_/ /_  ___  ____ ___ 
   / /|_/ / _ \   / __ `/ __ \/ __  /  / __/ __ \/ _ \/ __ `__ \
  / /  / /  __/  / /_/ / / / / /_/ /  / /_/ / / /  __/ / / / / /
