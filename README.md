@@ -1,4 +1,4 @@
-# 🛕 ASCII Quest: Me And Them
+# 🛕 The MASM Project: Me And Them
 
 > An x86 Assembly adventure, where code meets chaos and temples hum with 16-bit spirit.
 
